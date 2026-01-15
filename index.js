@@ -29,10 +29,7 @@ const pool = new Pool({
 // );
 
 async function isFreeUsed(userId) {
-  const r = await pool.query(
-    "SELECT 1 FROM free_usage WHERE user_id=$1 LIMIT 1",
-    [userId]
-  );
+  const r = await pool.query("SELECT 1 FROM free_usage WHERE user_id=$1 LIMIT 1", [userId]);
   return r.rowCount > 0;
 }
 
@@ -44,8 +41,17 @@ async function markFreeUsed(userId) {
 }
 
 // ================== STATE (MVP) ==================
-const userState = new Map(); 
+const userState = new Map();
 // userId -> { mode, step, userPhotoFileId?, refPhotoFileId?, credits?, pendingPhoto? }
+
+// антидубли (важно на webhook)
+const seenUpdateIds = new Set();     // update_id -> TTL
+const seenCallbackIds = new Set();   // callback_query.id -> TTL
+
+function rememberSet(set, key, ttlMs = 60_000) {
+  set.add(key);
+  setTimeout(() => set.delete(key), ttlMs).unref?.();
+}
 
 function getUserId(update) {
   return update.message?.from?.id || update.callback_query?.from?.id;
@@ -60,28 +66,64 @@ function clearState(userId) {
 }
 
 function isPhotoGoodEnough(photo) {
-  if (photo.width < 640 || photo.height < 640) return { ok: false, reason: "Фото слишком маленькое." };
-  if (photo.file_size && photo.file_size < 50_000) return { ok: false, reason: "Фото слишком сжато." };
+  if (!photo) return { ok: false, reason: "Фото не найдено." };
+  if (photo.width < 640 || photo.height < 640) return { ok: false, reason: "Фото слишком маленькое (нужно хотя бы 640x640)." };
+  if (photo.file_size && photo.file_size < 50_000) return { ok: false, reason: "Фото слишком сжато/малый размер файла." };
   return { ok: true };
 }
 
 // ================== TG HELPERS ==================
 async function tg(method, payload) {
-  return fetch(`${TELEGRAM_API}/${method}`, {
+  const resp = await fetch(`${TELEGRAM_API}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
-  }).then(r => r.json());
+  });
+
+  const json = await resp.json().catch(() => ({}));
+
+  // Не роняем бота на telegram 400, но логируем
+  if (!json?.ok) {
+    console.error("Telegram API error:", method, json);
+  }
+  return json;
 }
 
-const sendMessage = (chatId, text, reply_markup) =>
-  tg("sendMessage", { chat_id: chatId, text, reply_markup });
+async function sendMessage(chatId, text, reply_markup) {
+  return tg("sendMessage", {
+    chat_id: chatId,
+    text,
+    reply_markup,
+  });
+}
 
-const editMessageText = (chatId, messageId, text, reply_markup) =>
-  tg("editMessageText", { chat_id: chatId, message_id: messageId, text, reply_markup });
+async function editMessageText(chatId, messageId, text, reply_markup) {
+  const r = await tg("editMessageText", {
+    chat_id: chatId,
+    message_id: messageId,
+    text,
+    reply_markup,
+  });
 
-const answerCallbackQuery = (id) =>
-  tg("answerCallbackQuery", { callback_query_id: id });
+  // Игнорируем типичную ошибку "не изменено"
+  if (r?.ok === false && (r?.description || "").includes("message is not modified")) {
+    return r;
+  }
+  return r;
+}
+
+async function answerCallbackQuery(id, text) {
+  // Важно: callback может "протухнуть" — это норм, просто игнорим
+  try {
+    return await tg("answerCallbackQuery", {
+      callback_query_id: id,
+      text,
+      show_alert: false,
+    });
+  } catch {
+    return null;
+  }
+}
 
 // ================== UI ==================
 const MAIN_MENU_KB = {
@@ -95,15 +137,18 @@ const MAIN_MENU_KB = {
   ],
 };
 
-const BACK_KB = { inline_keyboard: [[{ text: "🏠 В меню", callback_data: "nav_menu" }]] };
+const BACK_KB = {
+  inline_keyboard: [[{ text: "🏠 В меню", callback_data: "nav_menu" }]],
+};
 
 // ================== PHOTO PROCESS ==================
 async function processUserPhoto({ userId, chatId, photo }) {
   const st = userState.get(userId);
 
+  // Если тариф ещё не выбран — сохраняем pending и просим выбрать тариф
   if (!st || !st.step) {
     setState(userId, { pendingPhoto: photo });
-    sendMessage(
+    await sendMessage(
       chatId,
       "Фото получено. Сначала выбери тариф — я использую это фото автоматически.",
       MAIN_MENU_KB
@@ -111,12 +156,14 @@ async function processUserPhoto({ userId, chatId, photo }) {
     return;
   }
 
+  // Проверяем качество фото
   const q = isPhotoGoodEnough(photo);
   if (!q.ok) {
-    sendMessage(chatId, q.reason, BACK_KB);
+    await sendMessage(chatId, q.reason, BACK_KB);
     return;
   }
 
+  // Шаг 1: фото пользователя для анализа
   if (st.step === "await_user_photo") {
     setState(userId, {
       userPhotoFileId: photo.file_id,
@@ -124,40 +171,55 @@ async function processUserPhoto({ userId, chatId, photo }) {
       step: "analysis_done",
     });
 
-    sendMessage(chatId, "Делаю анализ…");
+    await sendMessage(chatId, "Делаю анализ…");
 
-    if (st.mode === "free") await markFreeUsed(userId);
+    if (st.mode === "free") {
+      await markFreeUsed(userId);
+    }
 
     const n = st.mode === "free" ? 2 : 4;
-    sendMessage(chatId, "Анализ готов. Показать варианты?", {
+
+    await sendMessage(chatId, "Анализ готов. Показать варианты?", {
       inline_keyboard: [
         [{ text: `Показать ${n}`, callback_data: `gen_hair_${st.mode}` }],
         [{ text: "🏠 В меню", callback_data: "nav_menu" }],
       ],
     });
+
+    return;
   }
 
+  // Шаг 2: референс для цвета
   if (st.step === "await_ref_photo") {
     setState(userId, { refPhotoFileId: photo.file_id, step: "ref_ready" });
-    sendMessage(chatId, "Референс принят.", {
+
+    await sendMessage(chatId, "Референс принят.", {
       inline_keyboard: [
         [{ text: "Применить цвет", callback_data: "apply_ref_color" }],
         [{ text: "🏠 В меню", callback_data: "nav_menu" }],
       ],
     });
+
+    return;
   }
+
+  // Если фото прислали "не вовремя"
+  await sendMessage(chatId, "Фото получено, но сейчас я его не ждал. Нажми «В меню».", BACK_KB);
 }
 
-// ================== WEBHOOK ==================
-app.post("/webhook", (req, res) => {
-  const update = req.body;
-  res.sendStatus(200); // ⚡️ мгновенный ответ Telegram
+// ================== UPDATE HANDLER ==================
+async function handleUpdate(update) {
+  // антидубль по update_id
+  if (typeof update.update_id === "number") {
+    if (seenUpdateIds.has(update.update_id)) return;
+    rememberSet(seenUpdateIds, update.update_id, 60_000);
+  }
 
   // /start
   if (update.message?.text === "/start") {
     const userId = update.message.from.id;
     clearState(userId);
-    sendMessage(update.message.chat.id, "Выбери тариф:", MAIN_MENU_KB);
+    await sendMessage(update.message.chat.id, "Выбери тариф:", MAIN_MENU_KB);
     return;
   }
 
@@ -165,38 +227,42 @@ app.post("/webhook", (req, res) => {
   if (update.message?.photo?.length) {
     const userId = getUserId(update);
     const chatId = update.message.chat.id;
-    const photo = update.message.photo.at(-1);
-    setImmediate(() =>
-      processUserPhoto({ userId, chatId, photo }).catch(console.error)
-    );
+    const photo = update.message.photo[update.message.photo.length - 1];
+    await processUserPhoto({ userId, chatId, photo });
     return;
   }
 
   // callbacks
   if (update.callback_query) {
     const cq = update.callback_query;
+
+    // антидубль по callback id
+    if (seenCallbackIds.has(cq.id)) return;
+    rememberSet(seenCallbackIds, cq.id, 60_000);
+
     const userId = cq.from.id;
     const chatId = cq.message.chat.id;
     const msgId = cq.message.message_id;
     const data = cq.data;
 
-    answerCallbackQuery(cq.id);
+    // ⚡️ отвечаем мгновенно
+    await answerCallbackQuery(cq.id).catch(() => {});
 
     if (data === "nav_menu") {
-      editMessageText(chatId, msgId, "Выбери тариф:", MAIN_MENU_KB);
+      await editMessageText(chatId, msgId, "Выбери тариф:", MAIN_MENU_KB);
       return;
     }
 
     if (data.startsWith("flow_")) {
       const mode = data.replace("flow_", "");
 
+      // Free: проверяем лимит и прекращаем, если использован
       if (mode === "free") {
-        isFreeUsed(userId).then((used) => {
-          if (used) {
-            editMessageText(chatId, msgId, "Free уже использован.", MAIN_MENU_KB);
-            return;
-          }
-        });
+        const used = await isFreeUsed(userId);
+        if (used) {
+          await editMessageText(chatId, msgId, "Free уже использован.", MAIN_MENU_KB);
+          return;
+        }
       }
 
       const prev = userState.get(userId);
@@ -207,37 +273,57 @@ app.post("/webhook", (req, res) => {
         step: "await_user_photo",
         pendingPhoto: pending || null,
       };
+
       if (mode === "colorref5") base.credits = 5;
       if (mode === "colorref10") base.credits = 10;
 
       userState.set(userId, base);
 
       if (pending) {
-        editMessageText(chatId, msgId, "Использую уже загруженное фото.", BACK_KB);
-        setImmediate(() =>
-          processUserPhoto({ userId, chatId, photo: pending }).catch(console.error)
-        );
+        await editMessageText(chatId, msgId, "Использую уже загруженное фото.", BACK_KB);
+        await processUserPhoto({ userId, chatId, photo: pending });
         return;
       }
 
-      editMessageText(chatId, msgId, "Пришли фото лица анфас.", BACK_KB);
+      await editMessageText(chatId, msgId, "Пришли фото лица анфас.", BACK_KB);
       return;
     }
 
     if (data.startsWith("gen_hair_")) {
       const n = data.endsWith("free") ? 2 : 4;
-      sendMessage(chatId, `Генерация (${n}) — заглушка`, BACK_KB);
+      await sendMessage(chatId, `Генерация (${n}) — заглушка`, BACK_KB);
       return;
     }
 
     if (data === "apply_ref_color") {
-      sendMessage(chatId, "Примерка цвета — заглушка", BACK_KB);
+      await sendMessage(chatId, "Примерка цвета — заглушка", BACK_KB);
+      return;
     }
+
+    // неизвестный callback
+    await sendMessage(chatId, "Не понял команду. Нажми «В меню».", BACK_KB);
+    return;
   }
+}
+
+// ================== WEBHOOK ==================
+app.post("/webhook", (req, res) => {
+  const update = req.body;
+
+  // ⚡️ мгновенный ответ Telegram
+  res.sendStatus(200);
+
+  // обработка — асинхронно, чтобы Telegram не ретраил
+  handleUpdate(update).catch((err) => {
+    console.error("handleUpdate error:", err);
+  });
 });
 
-app.listen(process.env.PORT || 3000, () => {
-  console.log("HAIRbot running");
+// ================== START ==================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`HAIRbot running on port ${PORT}`);
+});
 });
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
