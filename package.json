@@ -1,11 +1,12 @@
 {
   "name": "hairbot",
   "version": "1.0.0",
-  "description": "Telegram bot for hairstyle recommendations",
+  "description": "Telegram bot for hairstyle recommendations using AI",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js",
+    "dev": "node --watch index.js",
     "create-tables": "node scripts/create-tables.js"
   },
   "dependencies": {
@@ -21,5 +22,7 @@
   "engines": {
     "node": ">=18.0.0"
   },
+  "keywords": ["telegram", "bot", "hairstyle", "openai"],
+  "author": "ElenaCherkasion",
   "license": "MIT"
 }
