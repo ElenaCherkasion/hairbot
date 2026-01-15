@@ -42,15 +42,62 @@ const pool = new Pool({
   ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : false,
 });
 
+// Автоматическое создание таблиц если их нет
+async function initializeDatabase() {
+  const client = await pool.connect();
+  try {
+    console.log('🔧 Проверяю/создаю таблицы...');
+    
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS free_usage (
+        user_id BIGINT PRIMARY KEY,
+        used_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_analysis (
+        user_id BIGINT PRIMARY KEY,
+        analysis_json JSONB,
+        analysis_text TEXT,
+        recos_json JSONB,
+        recos_text TEXT,
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_assets (
+        id SERIAL PRIMARY KEY,
+        user_id BIGINT,
+        kind TEXT CHECK (kind IN ('collage', 'pdf', 'photo')),
+        telegram_file_id TEXT,
+        meta JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS user_entitlements (
+        user_id BIGINT PRIMARY KEY,
+        pdf_credits INTEGER DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    
+    console.log('✅ Таблицы готовы');
+  } catch (error) {
+    console.error('❌ Ошибка создания таблиц:', error.message);
+  } finally {
+    client.release();
+  }
+}
+
 // Проверка подключения к БД
-pool.on('connect', () => {
+pool.on('connect', async () => {
   console.log('✅ Подключено к PostgreSQL');
+  await initializeDatabase();
 });
-
-pool.on('error', (err) => {
-  console.error('❌ Ошибка PostgreSQL:', err);
-});
-
 // ---------- Free usage ----------
 async function isFreeUsed(userId) {
   const r = await pool.query("SELECT 1 FROM free_usage WHERE user_id=$1 LIMIT 1", [userId]);
