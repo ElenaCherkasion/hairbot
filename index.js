@@ -10,5 +10,4 @@ import PDFDocument from "pdfkit";
 import FormData from "form-data";
 
 const { Pool } = pg;
-Шаг 4: Настройте Rend
 
