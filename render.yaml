@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: hairbot
+    name: hairstyle-bot
     env: node
     buildCommand: npm install
     startCommand: npm start
