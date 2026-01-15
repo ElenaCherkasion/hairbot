@@ -1,14 +1,12 @@
 {
   "name": "hairbot",
   "version": "1.0.0",
-  "description": "Telegram bot for hairstyle recommendations using OpenAI",
+  "description": "Telegram bot for hairstyle recommendations",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js",
-    "create-tables": "node scripts/create-tables.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "create-tables": "node scripts/create-tables.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
@@ -23,11 +21,5 @@
   "engines": {
     "node": ">=18.0.0"
   },
-  "keywords": ["telegram", "bot", "hairstyle", "openai"],
-  "author": "ElenaCherkasion",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/ElenaCherkasion/hairbot.git"
-  }
+  "license": "MIT"
 }
