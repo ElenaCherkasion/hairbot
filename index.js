@@ -795,15 +795,15 @@ async function handlePhoto(userId, chatId, photo) {
       `• <b>Рекомендуемая длина:</b> ${analysis.recommended_hair_length}\n\n` +
       `💡 <b>${analysis.summary_ru}</b>`;
     
-    await sendMessage(chatId, analysisMessage, BACK_KEYBOARD);
+    await editMessageText(chatId, processingMsg.result.message_id, analysisMessage, BACK_KEYBOARD);
     
     // Шаг 4: Генерируем рекомендации
     const imageCount = state.mode === 'free' ? 2 : state.mode === 'basic' ? 3 : state.mode === 'pro' ? 4 : 5;
     
-    await sendMessage(chatId, 
+    const recosMsg = await sendMessage(chatId, 
       `💡 <b>Генерирую ${imageCount} рекомендации...</b>\n` +
       `Подбираю стрижки под ваш тип лица.\n` +
-      `Это займет еще 10-15 секунд.`,
+      `Это займет 10-15 секунд.`,
       BACK_KEYBOARD
     );
     
@@ -815,4 +815,340 @@ async function handlePhoto(userId, chatId, photo) {
     }
     
     // Шаг 5: Показываем рекомендации
-    let recosText =
+    let recosText = `✂️ <b>РЕКОМЕНДАЦИИ СТРИЖЕК (${state.mode.toUpperCase()})</b>\n\n`;
+    
+    recommendations.recommendations?.forEach((rec, i) => {
+      recosText += `<b>${i + 1}. ${rec.title || "Вариант " + (i + 1)}</b>\n`;
+      recosText += `${rec.description || "Подходит для вашего типа лица."}\n`;
+      recosText += `• Длина: ${rec.length || "средняя"}\n\n`;
+    });
+    
+    await editMessageText(chatId, recosMsg.result.message_id, recosText, {
+      inline_keyboard: [
+        [{ text: `🎨 Сгенерировать ${imageCount} изображения`, callback_data: "generate_images" }],
+        [{ text: "🏠 Главное меню", callback_data: "menu" }]
+      ]
+    });
+
+    // Сохраняем состояние
+    setUserState(userId, { 
+      awaitingPhoto: false, 
+      analysis, 
+      recommendations,
+      photoFileId: photo.file_id,
+      mode: state.mode
+    });
+    
+    if (state.mode === 'free' && dbConnected) {
+      await markFreeUsed(userId);
+    }
+    
+    console.log(`✅ Анализ завершен для пользователя ${userId}`);
+    
+  } catch (error) {
+    console.error("❌ Ошибка обработки фото:", error.message);
+    console.error("Stack:", error.stack);
+    
+    await sendMessage(chatId,
+      "❌ <b>Произошла ошибка при обработке</b>\n\n" +
+      "Попробуйте:\n" +
+      "1. Другое фото (анфас, хороший свет)\n" +
+      "2. Подождать 5 минут\n" +
+      "3. Обратиться в поддержку\n\n" +
+      "<i>Ошибка: " + (error.message || "Неизвестная ошибка") + "</i>",
+      BACK_KEYBOARD
+    );
+  }
+}
+
+async function handleGenerateImages(userId, chatId) {
+  const state = userState.get(userId);
+  if (!state?.recommendations || !state?.mode) {
+    await sendMessage(chatId, "❌ Сначала получите рекомендации.", BACK_KEYBOARD);
+    return;
+  }
+
+  const imageCount = state.mode === 'free' ? 2 : state.mode === 'basic' ? 3 : state.mode === 'pro' ? 4 : 5;
+  
+  await sendMessage(chatId, 
+    `🎨 <b>Генерирую ${imageCount} изображения...</b>\n` +
+    `Это займет 1-3 минуты.\n` +
+    `Пожалуйста, подождите...`,
+    BACK_KEYBOARD
+  );
+
+  try {
+    const buffers = [];
+    const recs = state.recommendations.recommendations || [];
+    
+    for (let i = 0; i < recs.length; i++) {
+      const progressMsg = await sendMessage(chatId, 
+        `🖼️ Изображение ${i + 1}/${recs.length}...\n` +
+        `Генерирую "${recs[i].title || 'вариант'}"`,
+        BACK_KEYBOARD
+      );
+      
+      try {
+        const buffer = await generateHaircutImage(recs[i].prompt);
+        buffers.push(buffer);
+        console.log(`✅ Изображение ${i + 1} сгенерировано`);
+      } catch (imgError) {
+        console.error(`❌ Ошибка генерации изображения ${i + 1}:`, imgError.message);
+        // Пропускаем проблемное изображение
+      }
+      
+      // Удаляем сообщение о прогрессе
+      await tgApi('deleteMessage', {
+        chat_id: chatId,
+        message_id: progressMsg.result.message_id
+      }).catch(() => {});
+    }
+
+    if (buffers.length === 0) {
+      throw new Error("Не удалось сгенерировать изображения");
+    }
+
+    // Создаем коллаж
+    let collageBuffer;
+    let filename;
+    
+    if (buffers.length <= 2) {
+      // 1x2 коллаж
+      const resized = await Promise.all(buffers.map(b => sharp(b).resize(512, 512).toBuffer()));
+      collageBuffer = await sharp({
+        create: { width: 1024, height: 512, channels: 3, background: 'white' }
+      }).composite(
+        resized.map((b, i) => ({ input: b, left: i * 512, top: 0 }))
+      ).jpeg({ quality: 90 }).toBuffer();
+      filename = 'hairstyles_collage.jpg';
+    } else {
+      // 2x2 коллаж
+      const resized = await Promise.all(buffers.map(b => sharp(b).resize(512, 512).toBuffer()));
+      collageBuffer = await sharp({
+        create: { width: 1024, height: 1024, channels: 3, background: 'white' }
+      }).composite(
+        resized.map((b, i) => ({ 
+          input: b, 
+          left: (i % 2) * 512, 
+          top: Math.floor(i / 2) * 512 
+        }))
+      ).jpeg({ quality: 90 }).toBuffer();
+      filename = 'hairstyles_collage.jpg';
+    }
+
+    // Отправляем коллаж
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    form.append('caption', `✅ Ваши ${buffers.length} варианта стрижек\nТариф: ${state.mode.toUpperCase()}`);
+    form.append('document', collageBuffer, { filename });
+
+    await fetch(`${TELEGRAM_API}/sendDocument`, {
+      method: 'POST',
+      body: form,
+      headers: form.getHeaders()
+    });
+
+    await sendMessage(chatId, 
+      "✅ <b>Готово!</b>\n\n" +
+      "Ваши варианты стрижек отправлены выше.\n" +
+      "Вы можете:\n" +
+      "• Сохранить изображения\n" +
+      "• Показать стилисту\n" +
+      "• Попробовать другой тариф\n\n" +
+      "Спасибо за использование HAIRbot! 💇‍♀️",
+      MAIN_KEYBOARD
+    );
+
+    clearUserState(userId);
+    
+  } catch (error) {
+    console.error("❌ Ошибка генерации изображений:", error.message);
+    
+    await sendMessage(chatId,
+      "❌ <b>Ошибка генерации изображений</b>\n\n" +
+      "Возможные причины:\n" +
+      "• Проблемы с сетью\n" +
+      "• Ограничения OpenAI\n" +
+      "• Таймаут запроса\n\n" +
+      "Попробуйте позже или выберите другой тариф.",
+      BACK_KEYBOARD
+    );
+  }
+}
+
+// ================== UPDATE HANDLER ==================
+async function handleUpdate(update) {
+  console.log(`📨 Обработка update: ${update.update_id}`);
+  
+  try {
+    // Обработка сообщений
+    if (update.message) {
+      const userId = update.message.from.id;
+      const chatId = update.message.chat.id;
+      
+      if (update.message.text === '/start') {
+        await handleStart(userId, chatId);
+        return;
+      }
+      
+      if (update.message.photo && update.message.photo.length > 0) {
+        const photo = update.message.photo[update.message.photo.length - 1];
+        await handlePhoto(userId, chatId, photo);
+        return;
+      }
+      
+      if (update.message.text) {
+        await sendMessage(chatId, 
+          "🤖 Отправьте /start для начала работы\n" +
+          "Или выберите тариф в меню.",
+          MAIN_KEYBOARD
+        );
+        return;
+      }
+    }
+    
+    // Обработка callback-запросов (кнопок)
+    if (update.callback_query) {
+      const callback = update.callback_query;
+      const userId = callback.from.id;
+      const chatId = callback.message.chat.id;
+      const data = callback.data;
+      
+      // Быстрый ответ Telegram
+      await answerCallbackQuery(callback.id);
+      
+      console.log(`🔄 Callback от пользователя ${userId}: ${data}`);
+      
+      // Обработка команд меню
+      if (data === 'menu') {
+        await handleStart(userId, chatId);
+      }
+      else if (data === 'about_service') {
+        await handleAboutService(userId, chatId);
+      }
+      else if (data === 'tariffs_info') {
+        await handleTariffsInfo(userId, chatId);
+      }
+      else if (data === 'payment_info') {
+        await handlePaymentInfo(userId, chatId);
+      }
+      else if (data === 'examples') {
+        await handleExamples(userId, chatId);
+      }
+      else if (data === 'payment_sbp') {
+        await sendMessage(chatId,
+          "📱 <b>Оплата через СБП</b>\n\n" +
+          "Для оплаты через СБП:\n" +
+          "1. Используйте номер телефона: +7 XXX XXX XX XX\n" +
+          "2. Укажите сумму тарифа\n" +
+          "3. В комментарии укажите ваш ID: " + userId + "\n\n" +
+          "После оплаты нажмите '✅ Я оплатил(а)'",
+          PAYMENT_KEYBOARD
+        );
+      }
+      else if (data === 'payment_confirmed') {
+        const state = userState.get(userId);
+        if (state?.awaitingPayment && state?.selectedTariff) {
+          await sendMessage(chatId,
+            "✅ <b>Спасибо за оплату!</b>\n\n" +
+            "Тариф активирован.\n" +
+            "Теперь отправьте фото лица для анализа:",
+            BACK_KEYBOARD
+          );
+          setUserState(userId, { 
+            mode: state.selectedTariff, 
+            awaitingPhoto: true,
+            awaitingPayment: false 
+          });
+        } else {
+          await sendMessage(chatId,
+            "❌ <b>Не найдена информация об оплате</b>\n\n" +
+            "Пожалуйста:\n" +
+            "1. Выберите тариф\n" +
+            "2. Произведите оплату\n" +
+            "3. Затем нажмите эту кнопку",
+            MAIN_KEYBOARD
+          );
+        }
+      }
+      else if (data.startsWith('mode_')) {
+        const mode = data.replace('mode_', '');
+        await handleModeSelection(userId, chatId, mode);
+      }
+      else if (data === 'generate_images') {
+        await handleGenerateImages(userId, chatId);
+      }
+      else if (data === 'get_pdf') {
+        await sendMessage(chatId,
+          "📄 <b>PDF-отчет</b>\n\n" +
+          "Функция PDF-отчета доступна в тарифах PRO и PREMIUM.\n" +
+          "Отчет будет доступен после генерации изображений.",
+          BACK_KEYBOARD
+        );
+      }
+      else {
+        await sendMessage(chatId, "❌ Неизвестная команда", BACK_KEYBOARD);
+      }
+    }
+    
+  } catch (error) {
+    console.error("❌ Ошибка обработки update:", error.message);
+    console.error("Stack:", error.stack);
+  }
+}
+
+// ================== WEBHOOK ENDPOINT ==================
+app.post("/webhook", async (req, res) => {
+  console.log(`🤖 Webhook получен в ${new Date().toISOString()}`);
+  
+  // Всегда отвечаем сразу Telegram
+  res.status(200).send('OK');
+  
+  // Асинхронно обрабатываем update
+  if (req.body && req.body.update_id) {
+    const updateId = req.body.update_id;
+    
+    // Базовая защита от дубликатов
+    if (seenUpdateIds.has(updateId)) {
+      console.log(`⏭️ Пропускаем дубликат update ${updateId}`);
+      return;
+    }
+    
+    seenUpdateIds.add(updateId);
+    setTimeout(() => seenUpdateIds.delete(updateId), 60000);
+    
+    try {
+      await handleUpdate(req.body);
+      console.log(`✅ Обработан update ${updateId}`);
+    } catch (error) {
+      console.error(`❌ Ошибка обработки update ${updateId}:`, error);
+    }
+  } else {
+    console.log("⚠️ Пустое тело запроса webhook");
+  }
+});
+
+// ================== START SERVER ==================
+app.listen(PORT, () => {
+  console.log(`
+🎉 HAIRbot запущен!
+📍 Порт: ${PORT}
+🌐 URL: https://hairstyle-bot.onrender.com
+🏥 Health: https://hairstyle-bot.onrender.com/health
+📨 Webhook: https://hairstyle-bot.onrender.com/webhook
+🤖 Бот готов к работе!
+  `);
+  
+  // Проверяем ключи
+  if (process.env.OPENAI_API_KEY) {
+    console.log("✅ OpenAI API Key: настроен");
+  } else {
+    console.log("❌ OpenAI API Key: ОТСУТСТВУЕТ");
+  }
+  
+  if (process.env.TELEGRAM_TOKEN) {
+    console.log("✅ Telegram Token: настроен");
+  } else {
+    console.log("❌ Telegram Token: ОТСУТСТВУЕТ");
+  }
+});
