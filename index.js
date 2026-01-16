@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 3000;
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const PROVIDER_TOKEN = process.env.PROVIDER_TOKEN;
 const PRIVACY_POLICY_URL = process.env.PRIVACY_POLICY_URL || "https://ваш-сайт.ru/privacy";
-const SUPPORT_EMAIL = "cherkashina720@gmail.com"; // Обновленный email
+const SUPPORT_EMAIL = "cherkashina720@gmail.com";
 const SUPPORT_TELEGRAM = process.env.SUPPORT_TELEGRAM || "https://t.me/your_support";
 
 // ТЕСТОВЫЕ ЦЕНЫ (в копейках)
@@ -32,11 +32,11 @@ const ORIGINAL_PRICES = {
 const USE_TEST_PRICES = process.env.NODE_ENV !== 'production';
 
 const getPrice = (tariff) => {
-  if (USE_TEST_PRICES) {
+  if (USE_TEST_PRICES && TEST_PRICES[tariff]) {
     console.log(`💰 Используется ТЕСТОВАЯ цена для ${tariff}: ${TEST_PRICES[tariff] / 100}₽`);
     return TEST_PRICES[tariff];
   }
-  return ORIGINAL_PRICES[tariff];
+  return ORIGINAL_PRICES[tariff] || 0;
 };
 
 const getPriceDisplay = (tariff) => {
@@ -117,7 +117,10 @@ class DatabaseService {
         connectionTimeoutMillis: 5000
       });
 
-      await this.pool.query('SELECT 1');
+      // Проверяем подключение
+      const client = await this.pool.connect();
+      client.release();
+      
       console.log("✅ PostgreSQL подключен успешно");
       
       await this.createTables();
@@ -447,8 +450,7 @@ class BotHandlers {
   }
 
   static async tariffs(userId, chatId) {
-    const message = 
-      `💰 <b>Тарифы HAIRbot</b>\n\n`;
+    let message = `💰 <b>Тарифы HAIRbot</b>\n\n`;
     
     if (USE_TEST_PRICES) {
       message += `🎯 <b>ТЕСТОВЫЕ ЦЕНЫ (для проверки работы)</b>\n\n`;
@@ -759,8 +761,6 @@ class BotHandlers {
     );
     
     // TODO: Здесь будет логика анализа через OpenAI
-    // await analyzeAndSendResults(userId, chatId, photo, tariff);
-    
     // Временно - заглушка
     setTimeout(async () => {
       await telegram.sendMessage(chatId,
@@ -858,40 +858,4 @@ async function handleUpdate(update) {
         case 'consent_no':
           await BotHandlers.handleConsentResponse(userId, chatId, false, callback.id);
           break;
-        default:
-          // Обработка consent_<tariff>
-          if (data.startsWith('consent_')) {
-            const tariff = data.replace('consent_', '');
-            if (['free', 'basic', 'pro', 'premium'].includes(tariff)) {
-              await BotHandlers.startConsentFlow(userId, chatId, tariff);
-            }
-          }
-          break;
-      }
-    }
-    
-  } catch (error) {
-    console.error("❌ Ошибка обработки update:", error.message, error.stack);
-  }
-}
-
-// ================== EXPRESS APP ==================
-const app = express();
-app.use(express.json({ limit: "10mb" }));
-
-app.get("/health", (req, res) => {
-  res.status(200).json({ 
-    status: "ok",
-    timestamp: new Date().toISOString(),
-    db_connected: db.connected,
-    has_provider_token: !!PROVIDER_TOKEN,
-    test_prices: USE_TEST_PRICES,
-    support_email: SUPPORT_EMAIL
-  });
-});
-
-app.get("/", (req, res) => {
-  res.send(`
-    🤖 HAIRbot is running
-    📧 Поддержка: ${SUPPORT_EMAIL}
-    💰 Режим: ${USE_TEST_PR
+       
