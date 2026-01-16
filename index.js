@@ -1,1154 +1,496 @@
-import dotenv from "dotenv";
-dotenv.config();
-
-import express from "express";
-import fetch from "node-fetch";
-import pg from "pg";
-import OpenAI from "openai";
-import sharp from "sharp";
-import PDFDocument from "pdfkit";
-import FormData from "form-data";
-
-const { Pool } = pg;
-
-// ================== CONFIG ==================
-const PORT = process.env.PORT || 3000;
-
-// Debug environment variables
-console.log("🔍 Проверка переменных окружения:");
-console.log("TELEGRAM_TOKEN:", process.env.TELEGRAM_TOKEN ? "✅ Установлен" : "❌ ОТСУТСТВУЕТ");
-console.log("OPENAI_API_KEY:", process.env.OPENAI_API_KEY ? "✅ Установлен" : "❌ ОТСУТСТВУЕТ");
-console.log("DATABASE_URL:", process.env.DATABASE_URL ? "✅ Установлен" : "❌ ОТСУТСТВУЕТ");
-
-if (!process.env.TELEGRAM_TOKEN) {
-  console.error("❌ КРИТИЧЕСКАЯ ОШИБКА: TELEGRAM_TOKEN не установлен");
-  process.exit(1);
-}
-
-if (!process.env.OPENAI_API_KEY) {
-  console.error("❌ КРИТИЧЕСКАЯ ОШИБКА: OPENAI_API_KEY не установлен");
-  process.exit(1);
-}
-
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
-
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const OPENAI_MODEL_VISION = process.env.OPENAI_MODEL_VISION || "gpt-4o-mini";
-const OPENAI_MODEL_TEXT = process.env.OPENAI_MODEL_TEXT || "gpt-4o-mini";
-const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "dall-e-3";
-
-const openai = new OpenAI({ 
-  apiKey: OPENAI_API_KEY,
-  timeout: 30000 // 30 секунд таймаут
-});
-
-// ================== APP ==================
-const app = express();
-app.use(express.json({ limit: "10mb" }));
-
-// Health endpoint
-app.get("/health", (req, res) => {
-  res.status(200).json({ 
-    status: "ok", 
-    timestamp: new Date().toISOString(),
-    service: "HAIRbot",
-    db_connected: !!global.dbConnected
-  });
-});
-
-// Root endpoint
-app.get("/", (req, res) => {
-  res.send("🤖 HAIRbot is running. Use /health for status.");
-});
-
-// ================== DATABASE ==================
-let pool = null;
-let dbConnected = false;
-
-async function initializeDatabase() {
-  if (!process.env.DATABASE_URL) {
-    console.log("⚠️ DATABASE_URL не установлен, работа без базы данных");
-    return false;
-  }
-
-  try {
-    console.log("🔗 Подключаюсь к PostgreSQL...");
+// Проверка согласий перед любым действием
+async function requireConsents(userId, chatId, actionType = "действие") {
+  const hasConsents = await hasAllConsents(userId);
+  
+  if (!hasConsents) {
+    const existingConsents = await checkExistingConsents(userId);
+    const missingConsents = [];
     
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-      max: 5,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000
-    });
-
-    const client = await pool.connect();
-    console.log("✅ PostgreSQL подключен успешно");
-    
-    // Создаем таблицы если их нет
-    const tablesSQL = [
-      `CREATE TABLE IF NOT EXISTS free_usage (
-        user_id BIGINT PRIMARY KEY,
-        used_at TIMESTAMP DEFAULT NOW()
-      )`,
-      
-      `CREATE TABLE IF NOT EXISTS user_analysis (
-        user_id BIGINT PRIMARY KEY,
-        analysis_json JSONB,
-        analysis_text TEXT,
-        recos_json JSONB,
-        recos_text TEXT,
-        updated_at TIMESTAMP DEFAULT NOW()
-      )`,
-      
-      `CREATE TABLE IF NOT EXISTS user_assets (
-        id SERIAL PRIMARY KEY,
-        user_id BIGINT,
-        kind TEXT,
-        telegram_file_id TEXT,
-        meta JSONB DEFAULT '{}',
-        created_at TIMESTAMP DEFAULT NOW()
-      )`,
-      
-      `CREATE TABLE IF NOT EXISTS user_entitlements (
-        user_id BIGINT PRIMARY KEY,
-        pdf_credits INTEGER DEFAULT 0,
-        updated_at TIMESTAMP DEFAULT NOW()
-      )`,
-      
-      `CREATE TABLE IF NOT EXISTS payments (
-        id SERIAL PRIMARY KEY,
-        user_id BIGINT,
-        amount DECIMAL(10,2),
-        currency VARCHAR(10) DEFAULT 'RUB',
-        tariff VARCHAR(50),
-        payment_id VARCHAR(255),
-        status VARCHAR(50) DEFAULT 'pending',
-        created_at TIMESTAMP DEFAULT NOW(),
-        completed_at TIMESTAMP
-      )`
-    ];
-
-    for (const sql of tablesSQL) {
-      await client.query(sql);
+    if (!existingConsents.pd_processing) {
+      missingConsents.push("Обработка персональных данных");
     }
-
-    // Создаем индексы
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_user_analysis_user_id ON user_analysis(user_id);
-      CREATE INDEX IF NOT EXISTS idx_user_assets_user_id ON user_assets(user_id);
-      CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
-      CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
-    `);
-
-    client.release();
-    dbConnected = true;
-    global.dbConnected = true;
-    console.log("✅ Таблицы базы данных готовы");
-    return true;
+    if (!existingConsents.third_party_transfer) {
+      missingConsents.push("Передача данных третьим лицам");
+    }
     
-  } catch (error) {
-    console.error("❌ Ошибка инициализации базы данных:", error.message);
-    console.error("Stack:", error.stack);
+    let message = `❌ <b>Необходимо дать согласие на обработку персональных данных</b>\n\n`;
+    
+    if (missingConsents.length > 0) {
+      message += `Отсутствуют следующие согласия:\n`;
+      missingConsents.forEach((consent, index) => {
+        message += `${index + 1}. ${consent}\n`;
+      });
+    }
+    
+    message += `\nДля продолжения выберите тариф и пройдите процедуру согласия.`;
+    
+    await sendMessage(chatId, message, {
+      inline_keyboard: [
+        [{ text: "📋 Пройти процедуру согласия", callback_data: "start_consent_flow" }],
+        [{ text: "🔒 Политика конфиденциальности", url: PRIVACY_POLICY_URL }],
+        [{ text: "🏠 Главное меню", callback_data: "menu" }]
+      ]
+    });
+    
     return false;
-  }
-}
-
-initializeDatabase().then(success => {
-  if (success) {
-    console.log("🎉 База данных инициализирована успешно");
-  } else {
-    console.log("⚠️ Работа в ограниченном режиме без базы данных");
-  }
-});
-
-// ================== DATABASE HELPERS ==================
-async function dbQuery(query, params = []) {
-  if (!dbConnected || !pool) {
-    console.log("⚠️ База данных недоступна для запроса:", query.substring(0, 50));
-    return { rows: [], rowCount: 0 };
   }
   
-  try {
-    return await pool.query(query, params);
-  } catch (error) {
-    console.error("Ошибка запроса к базе данных:", error.message);
-    return { rows: [], rowCount: 0 };
-  }
+  return true;
 }
 
-async function isFreeUsed(userId) {
-  const result = await dbQuery("SELECT 1 FROM free_usage WHERE user_id = $1 LIMIT 1", [userId]);
-  return result.rowCount > 0;
-}
+// ================== ОБНОВЛЕННЫЕ ОБРАБОТЧИКИ ==================
 
-async function markFreeUsed(userId) {
-  await dbQuery("INSERT INTO free_usage (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING", [userId]);
-}
-
-async function saveUserAnalysis(userId, analysisJson, analysisText) {
-  await dbQuery(
-    `INSERT INTO user_analysis (user_id, analysis_json, analysis_text, updated_at)
-     VALUES ($1, $2, $3, NOW())
-     ON CONFLICT (user_id) 
-     DO UPDATE SET analysis_json = $2, analysis_text = $3, updated_at = NOW()`,
-    [userId, JSON.stringify(analysisJson), analysisText]
-  );
-}
-
-async function saveUserRecos(userId, recosJson, recosText) {
-  await dbQuery(
-    `UPDATE user_analysis 
-     SET recos_json = $2, recos_text = $3, updated_at = NOW()
-     WHERE user_id = $1`,
-    [userId, JSON.stringify(recosJson), recosText]
-  );
-}
-
-async function getUserAnalysis(userId) {
-  const result = await dbQuery(
-    "SELECT analysis_json, analysis_text, recos_json, recos_text FROM user_analysis WHERE user_id = $1",
-    [userId]
-  );
-  return result.rows[0] || null;
-}
-
-async function createPayment(userId, amount, tariff, paymentId) {
-  await dbQuery(
-    `INSERT INTO payments (user_id, amount, tariff, payment_id, status)
-     VALUES ($1, $2, $3, $4, 'pending')`,
-    [userId, amount, tariff, paymentId]
-  );
-}
-
-// ================== STATE MANAGEMENT ==================
-const userState = new Map();
-const seenUpdateIds = new Set();
-
-function getUserId(update) {
-  return update.message?.from?.id || update.callback_query?.from?.id;
-}
-
-function setUserState(userId, data) {
-  const current = userState.get(userId) || {};
-  userState.set(userId, { ...current, ...data });
-}
-
-function clearUserState(userId) {
-  userState.delete(userId);
-}
-
-// ================== TELEGRAM API ==================
-async function tgApi(method, data) {
-  try {
-    const response = await fetch(`${TELEGRAM_API}/${method}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-      timeout: 10000
-    });
-    
-    const result = await response.json();
-    
-    if (!result.ok) {
-      console.error(`Ошибка Telegram API (${method}):`, result);
+async function handleTariffSelection(userId, chatId, tariff) {
+  // Для бесплатного тарифа сразу начинаем согласия
+  if (tariff === 'free') {
+    const used = await isFreeUsed(userId);
+    if (used) {
+      await sendMessage(chatId, 
+        `❌ <b>Бесплатный анализ уже использован</b>\n\n` +
+        "Бесплатный анализ доступен только один раз.\n" +
+        "Выберите платный тариф для продолжения:",
+        MAIN_KEYBOARD
+      );
+      return;
     }
     
-    return result;
-  } catch (error) {
-    console.error(`Ошибка подключения к Telegram API (${method}):`, error.message);
-    return { ok: false };
+    // Начинаем процедуру согласия
+    await startConsentFlow(userId, chatId, 'free');
+    
+  } else {
+    // Для платных тарифов проверяем согласия
+    const hasConsents = await hasAllConsents(userId);
+    
+    if (!hasConsents) {
+      // Согласий нет - предлагаем пройти процедуру
+      await sendMessage(chatId,
+        `💰 <b>Тариф: ${tariff.toUpperCase()}</b>\n\n` +
+        `❌ <b>Необходимо дать согласие на обработку данных</b>\n\n` +
+        `Перед оплатой тарифа необходимо дать согласие на:\n` +
+        `1. Обработку персональных данных\n` +
+        `2. Передачу данных третьим лицам\n\n` +
+        `Нажмите кнопку ниже, чтобы пройти процедуру согласия:`,
+        {
+          inline_keyboard: [
+            [{ text: "✅ Пройти процедуру согласия", callback_data: `consent_before_pay_${tariff}` }],
+            [{ text: "🔒 Политика конфиденциальности", url: PRIVACY_POLICY_URL }],
+            [{ text: "🏠 Главное меню", callback_data: "menu" }]
+          ]
+        }
+      );
+      return;
+    }
+    
+    // Согласия есть - отправляем инвойс
+    if (!PROVIDER_TOKEN) {
+      await sendMessage(chatId,
+        `❌ <b>Оплата временно недоступна</b>\n\n`,
+        MAIN_KEYBOARD
+      );
+      return;
+    }
+    
+    await sendInvoice(userId, chatId, tariff);
   }
 }
 
-async function sendMessage(chatId, text, replyMarkup = null) {
-  return tgApi('sendMessage', {
-    chat_id: chatId,
-    text: text,
-    parse_mode: 'HTML',
-    reply_markup: replyMarkup,
-    disable_web_page_preview: false
+// Новая функция: начало процедуры согласия
+async function startConsentFlow(userId, chatId, tariff = null) {
+  // Получаем имя пользователя для персонализации
+  const userInfo = await tgApi('getChat', { chat_id: userId });
+  const userName = userInfo.result?.first_name || userInfo.result?.username || "";
+  
+  // Сохраняем состояние
+  setUserState(userId, {
+    mode: tariff,
+    awaitingConsent: true,
+    currentConsentStep: 1,
+    consentsGranted: {},
+    inConsentFlow: true
   });
+  
+  // Показываем первый экран согласия
+  await showConsentScreen1(userId, chatId, userName);
 }
 
-async function editMessageText(chatId, messageId, text, replyMarkup = null) {
-  return tgApi('editMessageText', {
-    chat_id: chatId,
-    message_id: messageId,
-    text: text,
-    parse_mode: 'HTML',
-    reply_markup: replyMarkup
+// Обновленная обработка согласий
+async function handleConsentResponse(userId, chatId, granted, callbackId = null) {
+  const state = userState.get(userId);
+  
+  if (!state || !state.awaitingConsent) {
+    await sendMessage(chatId, "Что-то пошло не так. Начните заново /start");
+    if (callbackId) await answerCallbackQuery(callbackId, "Ошибка, начните заново");
+    return;
+  }
+  
+  const currentStep = state.currentConsentStep;
+  let consentType;
+  
+  switch(currentStep) {
+    case 1:
+      consentType = 'pd_processing';
+      break;
+    case 2:
+      consentType = 'third_party_transfer';
+      break;
+    default:
+      if (callbackId) await answerCallbackQuery(callbackId, "Неизвестный шаг");
+      return;
+  }
+  
+  // Сохраняем согласие в БД
+  await saveConsent(userId, consentType, granted);
+  
+  if (!granted) {
+    // Отказ
+    await sendMessage(chatId,
+      `❌ <b>Согласие не получено</b>\n\n` +
+      `Для использования сервиса необходимо дать согласие на обработку персональных данных.\n\n` +
+      `Вы можете ознакомиться с политикой конфиденциальности или связаться с поддержкой.`,
+      AFTER_REFUSAL_KEYBOARD
+    );
+    
+    if (callbackId) await answerCallbackQuery(callbackId, "Согласие отклонено", true);
+    clearUserState(userId);
+    return;
+  }
+  
+  if (callbackId) await answerCallbackQuery(callbackId, `Согласие ${currentStep}/2 получено`);
+  
+  // Обновляем состояние
+  setUserState(userId, {
+    ...state,
+    consentsGranted: {
+      ...state.consentsGranted,
+      [consentType]: true
+    }
   });
+  
+  // Проверяем, все ли согласия получены
+  const newState = userState.get(userId);
+  const allGranted = Object.values(newState.consentsGranted).every(Boolean);
+  
+  if (allGranted) {
+    // Все согласия получены
+    const tariff = newState.mode;
+    
+    if (tariff === 'free') {
+      // Для free - просим фото
+      await sendMessage(chatId,
+        `✅ <b>Все согласия получены!</b>\n\n` +
+        `Теперь вы можете отправить фото лица для бесплатного анализа.\n\n` +
+        `📸 <b>Отправьте фото лица:</b>\n` +
+        `• Лицо анфас\n` +
+        `• Хорошее освещение\n` +
+        `• Чёткое изображение`,
+        BACK_KEYBOARD
+      );
+      
+      setUserState(userId, {
+        ...newState,
+        awaitingConsent: false,
+        awaitingPhoto: true,
+        inConsentFlow: false
+      });
+      
+    } else if (tariff) {
+      // Для платного тарифа - отправляем инвойс
+      await sendMessage(chatId,
+        `✅ <b>Все согласия получены!</b>\n\n` +
+        `Теперь вы можете оплатить тариф "${tariff.toUpperCase()}".\n` +
+        `Нажмите кнопку ниже для оплаты:`,
+        {
+          inline_keyboard: [
+            [{ text: `💳 Оплатить ${tariff.toUpperCase()}`, callback_data: `pay_after_consent_${tariff}` }],
+            [{ text: "🏠 Главное меню", callback_data: "menu" }]
+          ]
+        }
+      );
+      
+      setUserState(userId, {
+        ...newState,
+        awaitingConsent: false,
+        inConsentFlow: false
+      });
+      
+    } else {
+      // Просто завершили согласия без тарифа
+      await sendMessage(chatId,
+        `✅ <b>Все согласия получены!</b>\n\n` +
+        `Теперь вы можете выбрать тариф и начать анализ.`,
+        MAIN_KEYBOARD
+      );
+      
+      clearUserState(userId);
+    }
+    
+  } else {
+    // Показываем следующий экран согласия
+    await showNextConsentScreen(userId, chatId, currentStep + 1);
+  }
 }
 
-async function answerCallbackQuery(callbackQueryId, text = '') {
-  return tgApi('answerCallbackQuery', {
-    callback_query_id: callbackQueryId,
-    text: text,
-    show_alert: false
-  });
+// ================== ОБНОВЛЕННЫЙ ОБРАБОТЧИК КОЛБЭКОВ ==================
+
+// В функции handleUpdate, в блоке обработки callback_query:
+
+if (update.callback_query) {
+  const callback = update.callback_query;
+  const userId = callback.from.id;
+  const chatId = callback.message.chat.id;
+  const data = callback.data;
+  
+  await answerCallbackQuery(callback.id);
+  
+  console.log(`🔄 Callback: ${data} от user ${userId}`);
+  
+  // Обработка команд меню
+  if (data === 'menu') {
+    await handleStart(userId, chatId);
+  }
+  else if (data === 'about_service') {
+    await handleAboutService(userId, chatId);
+  }
+  else if (data === 'tariffs_info') {
+    await handleTariffsInfo(userId, chatId);
+  }
+  else if (data === 'examples') {
+    await handleExamples(userId, chatId);
+  }
+  else if (data.startsWith('mode_free') || data === 'tariff_free') {
+    await handleTariffSelection(userId, chatId, 'free');
+  }
+  else if (data.startsWith('tariff_')) {
+    const tariff = data.replace('tariff_', '');
+    if (['basic', 'pro', 'premium'].includes(tariff)) {
+      await handleTariffSelection(userId, chatId, tariff);
+    }
+  }
+  else if (data === 'start_consent_flow') {
+    // Начало процедуры согласия из меню
+    await startConsentFlow(userId, chatId);
+  }
+  else if (data.startsWith('consent_before_pay_')) {
+    // Согласия перед оплатой
+    const tariff = data.replace('consent_before_pay_', '');
+    await startConsentFlow(userId, chatId, tariff);
+  }
+  else if (data.startsWith('pay_after_consent_')) {
+    // Оплата после получения согласий
+    const tariff = data.replace('pay_after_consent_', '');
+    const hasConsents = await hasAllConsents(userId);
+    
+    if (!hasConsents) {
+      await sendMessage(chatId,
+        "❌ <b>Согласия не получены</b>\n\n" +
+        "Пройдите процедуру согласия перед оплатой.",
+        {
+          inline_keyboard: [
+            [{ text: "✅ Пройти процедуру согласия", callback_data: `consent_before_pay_${tariff}` }]
+          ]
+        }
+      );
+      return;
+    }
+    
+    if (!PROVIDER_TOKEN) {
+      await sendMessage(chatId, "❌ Оплата временно недоступна", MAIN_KEYBOARD);
+      return;
+    }
+    
+    await sendInvoice(userId, chatId, tariff);
+  }
+  else if (data === 'consent_yes') {
+    await handleConsentResponse(userId, chatId, true, callback.id);
+  }
+  else if (data === 'consent_no') {
+    await handleConsentResponse(userId, chatId, false, callback.id);
+  }
+  else if (data === 'generate_images') {
+    // Проверяем согласия перед генерацией изображений
+    const hasConsents = await hasAllConsents(userId);
+    if (!hasConsents) {
+      await sendMessage(chatId,
+        "❌ <b>Доступ запрещён</b>\n\n" +
+        "Для генерации изображений необходимо дать согласие на обработку персональных данных.",
+        {
+          inline_keyboard: [
+            [{ text: "📋 Пройти процедуру согласия", callback_data: "start_consent_flow" }]
+          ]
+        }
+      );
+      return;
+    }
+    await handleGenerateImages(userId, chatId);
+  }
+  else {
+    await sendMessage(chatId, "❌ Неизвестная команда", BACK_KEYBOARD);
+  }
 }
 
-// ================== KEYBOARDS ==================
+// ================== ОБНОВЛЕННАЯ ОБРАБОТКА ФОТО ==================
+
+async function handlePhoto(userId, chatId, photo) {
+  // 1. Проверяем согласия
+  const hasConsents = await hasAllConsents(userId);
+  
+  if (!hasConsents) {
+    await sendMessage(chatId,
+      `❌ <b>Необходимо дать согласие на обработку данных</b>\n\n` +
+      `Перед отправкой фото необходимо дать согласие на:\n` +
+      `1. Обработку персональных данных\n` +
+      `2. Передачу данных третьим лицам\n\n` +
+      `Выберите тариф и пройдите процедуру согласия:`,
+      {
+        inline_keyboard: [
+          [{ text: "🎁 Начать бесплатный анализ", callback_data: "mode_free" }],
+          [{ text: "📋 Пройти процедуру согласия", callback_data: "start_consent_flow" }],
+          [{ text: "🔒 Политика конфиденциальности", url: PRIVACY_POLICY_URL }]
+        ]
+      }
+    );
+    return;
+  }
+  
+  // 2. Проверяем состояние пользователя
+  const state = userState.get(userId);
+  
+  if (!state?.awaitingPhoto) {
+    await sendMessage(chatId, 
+      "📸 Сначала выберите тариф в меню.", 
+      MAIN_KEYBOARD
+    );
+    return;
+  }
+  
+  // 3. Проверяем размер фото
+  if (photo.file_size && photo.file_size < 50000) {
+    await sendMessage(chatId,
+      "❌ <b>Фото слишком маленькое</b>\n\n" +
+      "Пожалуйста, отправьте фото большего размера.",
+      BACK_KEYBOARD
+    );
+    return;
+  }
+  
+  // 4. Логируем обработку файла
+  await logFileProcessing(userId, photo.file_id, 'photo');
+  
+  // 5. Начинаем обработку
+  try {
+    await sendMessage(chatId, 
+      "⏳ <b>Загружаю фото...</b>",
+      BACK_KEYBOARD
+    );
+    
+    // ... остальная логика обработки фото ...
+    
+  } catch (error) {
+    console.error("❌ Ошибка обработки фото:", error.message);
+    await sendMessage(chatId,
+      "❌ <b>Произошла ошибка при обработке</b>\n\n" +
+      "Попробуйте другое фото или обратитесь в поддержку.",
+      BACK_KEYBOARD
+    );
+  }
+}
+
+// ================== ОБНОВЛЕННОЕ ГЛАВНОЕ МЕНЮ ==================
+
 const MAIN_KEYBOARD = {
   inline_keyboard: [
     [{ text: "📋 О сервисе HAIRbot", callback_data: "about_service" }],
     [{ text: "💰 Сравнение тарифов", callback_data: "tariffs_info" }],
-    [{ text: "🎁 Пробный Free", callback_data: "mode_free" }],
-    [{ text: "💎 BASIC - 299₽", callback_data: "mode_basic" }],
-    [{ text: "✨ PRO - 599₽", callback_data: "mode_pro" }],
-    [{ text: "👑 PREMIUM - 999₽", callback_data: "mode_premium" }],
     [{ text: "📚 Примеры разборов", callback_data: "examples" }],
-    [{ text: "💳 Оплата тарифов", callback_data: "payment_info" }]
-  ]
-};
-
-const BACK_KEYBOARD = {
-  inline_keyboard: [[{ text: "🏠 Главное меню", callback_data: "menu" }]]
-};
-
-const TARIFFS_KEYBOARD = {
-  inline_keyboard: [
     [{ text: "🎁 Пробный Free", callback_data: "mode_free" }],
-    [{ text: "💎 BASIC - 299₽", callback_data: "mode_basic" }],
-    [{ text: "✨ PRO - 599₽", callback_data: "mode_pro" }],
-    [{ text: "👑 PREMIUM - 999₽", callback_data: "mode_premium" }],
-    [{ text: "💳 Оплата", callback_data: "payment_info" }],
-    [{ text: "🏠 Главное меню", callback_data: "menu" }]
+    [{ text: "💎 BASIC - 299₽", callback_data: "tariff_basic" }],
+    [{ text: "✨ PRO - 599₽", callback_data: "tariff_pro" }],
+    [{ text: "👑 PREMIUM - 999₽", callback_data: "tariff_premium" }],
+    [{ text: "🔒 Политика конфиденциальности", url: PRIVACY_POLICY_URL }],
+    [{ text: "📝 Пройти процедуру согласия", callback_data: "start_consent_flow" }]
   ]
 };
 
-const PAYMENT_KEYBOARD = {
-  inline_keyboard: [
-    [{ text: "💳 Оплатить через Юмани", url: "https://yoomoney.ru/to/4100118102345678" }],
-    [{ text: "📱 Оплатить через СБП", callback_data: "payment_sbp" }],
-    [{ text: "✅ Я оплатил(а)", callback_data: "payment_confirmed" }],
-    [{ text: "🏠 Главное меню", callback_data: "menu" }]
-  ]
-};
+// ================== НОВАЯ ФУНКЦИЯ ДЛЯ /start ==================
 
-// ================== FILE HANDLING ==================
-async function getTelegramFileUrl(fileId) {
-  const result = await tgApi('getFile', { file_id: fileId });
-  if (!result.ok) {
-    console.error("Не удалось получить файл от Telegram:", result);
-    throw new Error('Не удалось получить файл');
-  }
-  
-  const filePath = result.result.file_path;
-  if (!filePath) {
-    throw new Error('Путь к файлу не найден');
-  }
-  
-  return `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${filePath}`;
-}
-
-async function downloadFile(url) {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
-    
-    const response = await fetch(url, { 
-      signal: controller.signal,
-      timeout: 30000
-    });
-    
-    clearTimeout(timeout);
-    
-    if (!response.ok) {
-      throw new Error(`Ошибка загрузки: ${response.status} ${response.statusText}`);
-    }
-    
-    const buffer = await response.arrayBuffer();
-    return Buffer.from(buffer);
-    
-  } catch (error) {
-    console.error("Ошибка загрузки файла:", error.message);
-    throw error;
-  }
-}
-
-// ================== OPENAI FUNCTIONS - ИСПРАВЛЕНЫ ==================
-async function analyzeFace(imageBuffer) {
-  try {
-    console.log("🔍 Начинаю анализ лица...");
-    
-    if (!imageBuffer || imageBuffer.length === 0) {
-      throw new Error("Пустой буфер изображения");
-    }
-    
-    const base64Image = imageBuffer.toString('base64');
-    
-    if (base64Image.length < 100) {
-      throw new Error("Изображение слишком маленькое");
-    }
-    
-    console.log(`📸 Размер изображения: ${imageBuffer.length} байт, base64: ${base64Image.length} символов`);
-    
-    // Упрощенный промпт для более надежного ответа
-    const analysisPrompt = `Ты — профессиональный стилист-парикмахер. Проанализируй это лицо и верни JSON со следующими полями:
-    {
-      "face_shape": "овальное/круглое/квадратное/сердце/ромб/прямоугольное",
-      "face_length": "короткое/среднее/длинное",
-      "jawline": "мягкая/средняя/четкая",
-      "cheekbones": "низкие/средние/высокие",
-      "forehead": "узкий/средний/широкий",
-      "recommended_hair_length": "короткие/средние/длинные",
-      "summary_ru": "Краткое описание на русском (2-3 предложения)"
-    }
-    
-    ВАЖНО: Ответь ТОЛЬКО JSON, без каких-либо дополнительных текстов, объяснений или форматирования.`;
-    
-    console.log("🤖 Отправляю запрос к OpenAI...");
-    
-    const startTime = Date.now();
-    
-    const response = await openai.chat.completions.create({
-      model: OPENAI_MODEL_VISION,
-      messages: [
-        {
-          role: "user",
-          content: [
-            { 
-              type: "text", 
-              text: analysisPrompt
-            },
-            { 
-              type: "image_url", 
-              image_url: { 
-                url: `data:image/jpeg;base64,${base64Image}`
-              } 
-            }
-          ]
-        }
-      ],
-      max_tokens: 500,
-      temperature: 0.1
-    });
-
-    const endTime = Date.now();
-    console.log(`⏱️ Время ответа OpenAI: ${endTime - startTime}ms`);
-    
-    const content = response.choices[0]?.message?.content || '{}';
-    console.log("📄 Ответ от OpenAI:", content.substring(0, 200) + "...");
-    
-    if (!content || content.trim() === '{}') {
-      throw new Error("Пустой ответ от OpenAI");
-    }
-    
-    // Извлекаем JSON из ответа
-    let jsonText = content.trim();
-    
-    // Убираем возможный markdown
-    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      jsonText = jsonMatch[0];
-    }
-    
-    console.log("🔧 Извлеченный JSON:", jsonText.substring(0, 150) + "...");
-    
-    const analysis = JSON.parse(jsonText);
-    
-    // Валидация результата
-    if (!analysis.face_shape || !analysis.summary_ru) {
-      console.warn("⚠️ Неполный анализ от OpenAI:", analysis);
-      // Добавляем значения по умолчанию для недостающих полей
-      analysis.face_shape = analysis.face_shape || "овальное";
-      analysis.face_length = analysis.face_length || "среднее";
-      analysis.summary_ru = analysis.summary_ru || "Лицо сбалансированных пропорций. Подходят различные стрижки средней длины.";
-    }
-    
-    console.log("✅ Анализ лица завершен:", analysis.face_shape);
-    return analysis;
-    
-  } catch (error) {
-    console.error("❌ ОШИБКА анализа лица:", error.message);
-    console.error("Детали ошибки:", error);
-    
-    // Возвращаем fallback анализ
-    return {
-      face_shape: "овальное",
-      face_length: "среднее",
-      jawline: "средняя",
-      cheekbones: "средние",
-      forehead: "средний",
-      recommended_hair_length: "средние",
-      summary_ru: "Анализ выполнен успешно. Лицо имеет сбалансированные пропорции, что позволяет экспериментировать с различными стрижками."
-    };
-  }
-}
-
-async function generateHairRecommendations(faceAnalysis, mode = 'basic') {
-  try {
-    console.log(`💡 Генерирую рекомендации для тарифа: ${mode}`);
-    
-    const count = mode === 'free' ? 2 : mode === 'basic' ? 3 : mode === 'pro' ? 4 : 5;
-    
-    const prompt = `На основе этого анализа лица: ${JSON.stringify(faceAnalysis)}
-    
-    Сгенерируй ${count} рекомендации стрижек на русском языке.
-    
-    Формат ответа (ТОЛЬКО JSON):
-    {
-      "recommendations": [
-        {
-          "title": "Название стрижки",
-          "description": "Описание (2 предложения)",
-          "length": "короткая/средняя/длинная",
-          "prompt": "Photorealistic prompt in English"
-        }
-      ]
-    }`;
-    
-    const response = await openai.chat.completions.create({
-      model: OPENAI_MODEL_TEXT,
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 800,
-      temperature: 0.7
-    });
-
-    const content = response.choices[0]?.message?.content || '{}';
-    
-    // Извлекаем JSON
-    let jsonText = content.trim();
-    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      jsonText = jsonMatch[0];
-    }
-    
-    const recommendations = JSON.parse(jsonText);
-    console.log(`✅ Сгенерировано ${recommendations.recommendations?.length || 0} рекомендаций`);
-    
-    return recommendations;
-    
-  } catch (error) {
-    console.error("❌ Ошибка генерации рекомендаций:", error.message);
-    
-    // Fallback рекомендации
-    const count = mode === 'free' ? 2 : mode === 'basic' ? 3 : mode === 'pro' ? 4 : 5;
-    return {
-      recommendations: Array.from({ length: count }, (_, i) => ({
-        title: `Стильная стрижка ${i + 1}`,
-        description: "Идеально подходит для вашего типа лица, балансирует пропорции.",
-        length: "средняя",
-        prompt: `Photorealistic ${faceAnalysis.face_shape || 'oval'} face with modern hairstyle, studio lighting`
-      }))
-    };
-  }
-}
-
-async function generateHaircutImage(prompt) {
-  try {
-    console.log("🎨 Генерирую изображение...");
-    
-    const response = await openai.images.generate({
-      model: OPENAI_IMAGE_MODEL,
-      prompt: prompt + ", photorealistic, professional haircut, studio lighting, clean white background, sharp focus",
-      size: "1024x1024",
-      quality: "standard",
-      n: 1
-    });
-
-    const imageUrl = response.data[0].url;
-    console.log("✅ Изображение сгенерировано, загружаю...");
-    
-    const imageResponse = await fetch(imageUrl, { timeout: 30000 });
-    const buffer = await imageResponse.arrayBuffer();
-    
-    return Buffer.from(buffer);
-    
-  } catch (error) {
-    console.error("❌ Ошибка генерации изображения:", error.message);
-    throw error;
-  }
-}
-
-// ================== BOT HANDLERS ==================
 async function handleStart(userId, chatId) {
-  const message = 
-    "🤖 <b>HAIRbot — сервис интеллектуального анализа внешности и подбора наиболее удачных решений для волос.</b>\n\n" +
-    "Бот анализирует лицо геометрически, учитывая форму (в том числе смешанную), пропорции, динамику черт и индивидуальные особенности внешности.\n\n" +
-    "Выберите действие:";
+  // Получаем имя пользователя
+  const userInfo = await tgApi('getChat', { chat_id: userId });
+  const userName = userInfo.result?.first_name || userInfo.result?.username || "";
+  
+  // Проверяем, есть ли согласия
+  const hasConsents = await hasAllConsents(userId);
+  
+  let message = `👋 ${userName ? userName + ", " : ""}<b>Добро пожаловать в HAIRbot!</b>\n\n`;
+  
+  if (hasConsents) {
+    message += `✅ <b>Ваши согласия получены</b>\n\n`;
+  } else {
+    message += `📋 <b>Перед началом работы необходимо дать согласие на обработку персональных данных</b>\n\n`;
+  }
+  
+  message += `Я помогу подобрать идеальную стрижку по форме вашего лица.\n`;
+  message += `Выберите действие:`;
   
   await sendMessage(chatId, message, MAIN_KEYBOARD);
 }
 
-async function handleAboutService(userId, chatId) {
-  const message = 
-    "📋 <b>HAIRbot — сервис интеллектуального анализа внешности и подбора наиболее удачных решений для волос.</b>\n\n" +
-    "Бот анализирует лицо геометрически, учитывая форму (в том числе смешанную), пропорции, динамику черт и индивидуальные особенности внешности.\n" +
-    "На основе этого анализа он подбирает оптимальные варианты длины, формы, чёлки, текстуры волос и цветовых решений — так, чтобы подчеркнуть сильные стороны внешности, освежить лицо и сохранить гармонию.\n\n" +
-    "<b>Анализ строится не на шаблонах, а на сочетании параметров:</b>\n" +
-    "• Геометрии лица, полноты, лба, скул, линии челюсти\n" +
-    "• Деталей — бровей, губ, носа и ушей (с корректными, мягкими рекомендациями)\n\n" +
-    "🎨 <b>Подбор цвета</b> основан на принципах системы Манселла: учитываются температура и тон кожи, природная контрастность и насыщенность внешности.\n" +
-    "Сначала предлагаются наиболее гармоничные, естественные оттенки, а затем — яркие трендовые варианты, подобранные строго по цветовой температуре кожи.\n\n" +
-    "🌀 <b>В расширенных тарифах</b> учитываются текстуры волос:\n" +
-    "• Биозавивка (с расчётом коэффициента завитка)\n" +
-    "• Кератиновое выпрямление — с пояснением изменений формы\n\n" +
-    "🔹 <b>На текущем этапе</b> сервис работает для женской внешности.\n" +
-    "🔹 <b>Генерации изображений</b> используются как визуальные иллюстрации к рекомендациям.\n\n" +
-    "<i>HAIRbot помогает понять, что действительно подойдёт именно вам, ещё до визита в салон.</i>";
-  
-  await sendMessage(chatId, message, BACK_KEYBOARD);
-}
+// ================== ОБНОВЛЕННАЯ ОБРАБОТКА УСПЕШНОЙ ОПЛАТЫ ==================
 
-async function handleTariffsInfo(userId, chatId) {
-  const message = 
-    "💰 <b>Сравнение тарифов HAIRbot</b>\n\n" +
-    "🎁 <b>ПРОБНЫЙ FREE</b> (1 раз)\n" +
-    "• Определение формы лица\n" +
-    "• 2 рекомендации стрижек\n" +
-    "• 2 изображения-иллюстрации\n" +
-    "• Без сохранения истории\n\n" +
-    "💎 <b>BASIC - 299₽</b>\n" +
-    "• Полный геометрический анализ\n" +
-    "• 3 рекомендации стрижек\n" +
-    "• Советы по длине и форме\n" +
-    "• 3 изображения\n" +
-    "• Сохранение в истории\n\n" +
-    "✨ <b>PRO - 599₽</b>\n" +
-    "• Всё из BASIC +\n" +
-    "• Анализ цветотипа по Манселлу\n" +
-    "• Подбор естественных цветов\n" +
-    "• 4 рекомендации с цветами\n" +
-    "• 4 изображения\n" +
-    "• PDF-отчет\n\n" +
-    "👑 <b>PREMIUM - 999₽</b>\n" +
-    "• Всё из PRO +\n" +
-    "• Учёт текстуры волос\n" +
-    "• Расчёт биозавивки/выпрямления\n" +
-    "• Трендовые акцентные цвета\n" +
-    "• 5 рекомендаций\n" +
-    "• 5 изображений\n" +
-    "• Приоритетная обработка\n\n" +
-    "💳 <b>Оплата:</b> Юмани, СБП";
-  
-  await sendMessage(chatId, message, TARIFFS_KEYBOARD);
-}
-
-async function handlePaymentInfo(userId, chatId) {
-  const message = 
-    "💳 <b>Способы оплаты тарифов HAIRbot</b>\n\n" +
-    "🔄 <b>Основной способ:</b>\n" +
-    "• <b>Юмани (бывший Яндекс.Деньги)</b>\n" +
-    "• Кошелек: 4100118102345678\n" +
-    "• Ссылка: https://yoomoney.ru/to/4100118102345678\n\n" +
-    "📱 <b>Альтернативные способы:</b>\n" +
-    "• СБП (Система быстрых платежей)\n" +
-    "• Карты Visa/MasterCard/МИР\n\n" +
-    "📝 <b>Инструкция по оплате:</b>\n" +
-    "1. Выберите тариф\n" +
-    "2. Нажмите '💳 Оплатить через Юмани'\n" +
-    "3. Укажите сумму (299/599/999₽)\n" +
-    "4. Выберите способ оплаты\n" +
-    "5. После оплаты нажмите '✅ Я оплатил(а)'\n\n" +
-    "⏱️ <b>После оплаты:</b>\n" +
-    "• Доступ к тарифу открывается сразу\n" +
-    "• Квитанция приходит на email\n" +
-    "• Поддержка: @hairstyle_support";
-  
-  await sendMessage(chatId, message, PAYMENT_KEYBOARD);
-}
-
-async function handleExamples(userId, chatId) {
-  const message = 
-    "📚 <b>Примеры готовых разборов</b>\n\n" +
-    "Здесь вы можете посмотреть примеры полных разборов от HAIRbot:\n\n" +
-    "👩 <b>Пример 1:</b> Овальное лицо\n" +
-    "• Форма: овальная с элементами сердца\n" +
-    "• Рекомендации: каскад, боб с челкой\n" +
-    "• Цвет: холодные каштановые оттенки\n\n" +
-    "👩 <b>Пример 2:</b> Круглое лицо\n" +
-    "• Форма: круглая с угловатой челюстью\n" +
-    "• Рекомендации: асимметричный пикс\n" +
-    "• Цвет: медовые блики\n\n" +
-    "👩 <b>Пример 3:</b> Квадратное лицо\n" +
-    "• Форма: квадратная с мягкими скулами\n" +
-    "• Рекомендации: длинные слои, боковая челка\n" +
-    "• Цвет: шоколад с рыжим оттенком\n\n" +
-    "<i>После вашего анализа вы получите подобный детальный разбор.</i>";
-  
-  await sendMessage(chatId, message, {
-    inline_keyboard: [
-      [{ text: "🏠 Главное меню", callback_data: "menu" }]
-    ]
-  });
-}
-
-async function handleModeSelection(userId, chatId, mode) {
-  const tariffs = {
-    'free': { name: "ПРОБНЫЙ FREE", price: "БЕСПЛАТНО", features: "2 рекомендации, 2 изображения" },
-    'basic': { name: "BASIC", price: "299₽", features: "3 рекомендации, 3 изображения" },
-    'pro': { name: "PRO", price: "599₽", features: "4 рекомендации с цветами, PDF" },
-    'premium': { name: "PREMIUM", price: "999₽", features: "5 рекомендаций, текстуры, приоритет" }
-  };
-  
-  const tariff = tariffs[mode];
-  
-  if (mode === 'free') {
-    const used = await isFreeUsed(userId);
-    if (used) {
-      await sendMessage(chatId, 
-        `❌ <b>${tariff.name} уже использован</b>\n\n` +
-        "Бесплатный анализ доступен только один раз.\n" +
-        "Выберите платный тариф для продолжения:",
-        TARIFFS_KEYBOARD
-      );
+async function handleSuccessfulPayment(userId, chatId, paymentData) {
+  try {
+    const payload = paymentData.invoice_payload;
+    const [tariff, userIdFromPayload] = payload.split('_');
+    
+    if (parseInt(userIdFromPayload) !== userId) {
+      console.error("❌ Несоответствие userId в payload");
       return;
     }
-  }
-  
-  if (mode !== 'free') {
-    await sendMessage(chatId,
-      `💰 <b>Тариф: ${tariff.name}</b>\n` +
-      `💵 Стоимость: ${tariff.price}\n` +
-      `🎯 Включено: ${tariff.features}\n\n` +
-      "Для продолжения необходимо оплатить тариф.\n" +
-      "Нажмите кнопку ниже для оплаты:",
-      PAYMENT_KEYBOARD
+    
+    // Сохраняем платеж
+    await createPayment(
+      userId, 
+      paymentData.total_amount / 100, 
+      tariff, 
+      `telegram_${paymentData.telegram_payment_charge_id || Date.now()}`
     );
     
-    // Сохраняем выбранный тариф
-    setUserState(userId, { selectedTariff: mode, awaitingPayment: true });
-    return;
-  }
-  
-  // Для free тарифа сразу запрашиваем фото
-  await sendMessage(chatId, 
-    `🎁 <b>Выбран тариф: ${tariff.name}</b>\n` +
-    `✨ ${tariff.features}\n\n` +
-    "📸 <b>Отправьте фото лица анфас:</b>\n" +
-    "• Хорошее освещение\n" +
-    "• Чёткое изображение\n" +
-    "• Лицо полностью видно\n" +
-    "• Без очков/головных уборов",
-    BACK_KEYBOARD
-  );
-  
-  setUserState(userId, { mode, awaitingPhoto: true });
-}
-
-async function handlePhoto(userId, chatId, photo) {
-  const state = userState.get(userId);
-  
-  if (!state?.awaitingPhoto) {
-    await sendMessage(chatId, "📸 Сначала выберите тариф в меню.", MAIN_KEYBOARD);
-    return;
-  }
-
-  console.log(`📸 Обработка фото для пользователя ${userId}, file_id: ${photo.file_id}`);
-  
-  // Проверяем размер фото
-  if (photo.file_size && photo.file_size < 50000) {
-    await sendMessage(chatId,
-      "❌ <b>Фото слишком маленькое</b>\n\n" +
-      "Пожалуйста, отправьте фото большего размера.\n" +
-      "Качество должно быть не менее 100KB.",
-      BACK_KEYBOARD
-    );
-    return;
-  }
-
-  try {
-    // Шаг 1: Получаем файл
-    await sendMessage(chatId, 
-      "⏳ <b>Загружаю фото...</b>\n" +
-      "Пожалуйста, подождите.",
-      BACK_KEYBOARD
-    );
+    // Проверяем согласия (должны быть, но на всякий случай)
+    const hasConsents = await hasAllConsents(userId);
     
-    const fileUrl = await getTelegramFileUrl(photo.file_id);
-    const imageBuffer = await downloadFile(fileUrl);
-    
-    console.log(`✅ Фото загружено, размер: ${Math.round(imageBuffer.length / 1024)}KB`);
-    
-    // Шаг 2: Анализируем лицо
-    await editMessageText(chatId, 
-      (await sendMessage(chatId, 
-        "🔍 <b>Анализирую лицо...</b>\n" +
-        "Идет геометрический анализ пропорций.\n" +
-        "Это займет 10-20 секунд.",
-        BACK_KEYBOARD
-      )).result.message_id,
-      "🔍 <b>Анализирую лицо...</b>\n" +
-      "Определяю форму, пропорции, черты.\n" +
-      "Пожалуйста, подождите..."
-    );
-    
-    const analysis = await analyzeFace(imageBuffer);
-    
-    // Сохраняем анализ
-    if (dbConnected) {
-      await saveUserAnalysis(userId, analysis, analysis.summary_ru || "Анализ выполнен");
-    }
-    
-    // Шаг 3: Показываем результаты анализа
-    const analysisMessage = 
-      `📊 <b>РЕЗУЛЬТАТЫ АНАЛИЗА</b>\n\n` +
-      `• <b>Форма лица:</b> ${analysis.face_shape}\n` +
-      `• <b>Длина лица:</b> ${analysis.face_length}\n` +
-      `• <b>Линия челюсти:</b> ${analysis.jawline}\n` +
-      `• <b>Скулы:</b> ${analysis.cheekbones}\n` +
-      `• <b>Лоб:</b> ${analysis.forehead}\n` +
-      `• <b>Рекомендуемая длина:</b> ${analysis.recommended_hair_length}\n\n` +
-      `💡 <b>${analysis.summary_ru}</b>`;
-    
-    await editMessageText(chatId, processingMsg.result.message_id, analysisMessage, BACK_KEYBOARD);
-    
-    // Шаг 4: Генерируем рекомендации
-    const imageCount = state.mode === 'free' ? 2 : state.mode === 'basic' ? 3 : state.mode === 'pro' ? 4 : 5;
-    
-    const recosMsg = await sendMessage(chatId, 
-      `💡 <b>Генерирую ${imageCount} рекомендации...</b>\n` +
-      `Подбираю стрижки под ваш тип лица.\n` +
-      `Это займет 10-15 секунд.`,
-      BACK_KEYBOARD
-    );
-    
-    const recommendations = await generateHairRecommendations(analysis, state.mode);
-    
-    // Сохраняем рекомендации
-    if (dbConnected) {
-      await saveUserRecos(userId, recommendations, "Рекомендации сгенерированы");
-    }
-    
-    // Шаг 5: Показываем рекомендации
-    let recosText = `✂️ <b>РЕКОМЕНДАЦИИ СТРИЖЕК (${state.mode.toUpperCase()})</b>\n\n`;
-    
-    recommendations.recommendations?.forEach((rec, i) => {
-      recosText += `<b>${i + 1}. ${rec.title || "Вариант " + (i + 1)}</b>\n`;
-      recosText += `${rec.description || "Подходит для вашего типа лица."}\n`;
-      recosText += `• Длина: ${rec.length || "средняя"}\n\n`;
-    });
-    
-    await editMessageText(chatId, recosMsg.result.message_id, recosText, {
-      inline_keyboard: [
-        [{ text: `🎨 Сгенерировать ${imageCount} изображения`, callback_data: "generate_images" }],
-        [{ text: "🏠 Главное меню", callback_data: "menu" }]
-      ]
-    });
-
-    // Сохраняем состояние
-    setUserState(userId, { 
-      awaitingPhoto: false, 
-      analysis, 
-      recommendations,
-      photoFileId: photo.file_id,
-      mode: state.mode
-    });
-    
-    if (state.mode === 'free' && dbConnected) {
-      await markFreeUsed(userId);
-    }
-    
-    console.log(`✅ Анализ завершен для пользователя ${userId}`);
-    
-  } catch (error) {
-    console.error("❌ Ошибка обработки фото:", error.message);
-    console.error("Stack:", error.stack);
-    
-    await sendMessage(chatId,
-      "❌ <b>Произошла ошибка при обработке</b>\n\n" +
-      "Попробуйте:\n" +
-      "1. Другое фото (анфас, хороший свет)\n" +
-      "2. Подождать 5 минут\n" +
-      "3. Обратиться в поддержку\n\n" +
-      "<i>Ошибка: " + (error.message || "Неизвестная ошибка") + "</i>",
-      BACK_KEYBOARD
-    );
-  }
-}
-
-async function handleGenerateImages(userId, chatId) {
-  const state = userState.get(userId);
-  if (!state?.recommendations || !state?.mode) {
-    await sendMessage(chatId, "❌ Сначала получите рекомендации.", BACK_KEYBOARD);
-    return;
-  }
-
-  const imageCount = state.mode === 'free' ? 2 : state.mode === 'basic' ? 3 : state.mode === 'pro' ? 4 : 5;
-  
-  await sendMessage(chatId, 
-    `🎨 <b>Генерирую ${imageCount} изображения...</b>\n` +
-    `Это займет 1-3 минуты.\n` +
-    `Пожалуйста, подождите...`,
-    BACK_KEYBOARD
-  );
-
-  try {
-    const buffers = [];
-    const recs = state.recommendations.recommendations || [];
-    
-    for (let i = 0; i < recs.length; i++) {
-      const progressMsg = await sendMessage(chatId, 
-        `🖼️ Изображение ${i + 1}/${recs.length}...\n` +
-        `Генерирую "${recs[i].title || 'вариант'}"`,
-        BACK_KEYBOARD
-      );
-      
-      try {
-        const buffer = await generateHaircutImage(recs[i].prompt);
-        buffers.push(buffer);
-        console.log(`✅ Изображение ${i + 1} сгенерировано`);
-      } catch (imgError) {
-        console.error(`❌ Ошибка генерации изображения ${i + 1}:`, imgError.message);
-        // Пропускаем проблемное изображение
-      }
-      
-      // Удаляем сообщение о прогрессе
-      await tgApi('deleteMessage', {
-        chat_id: chatId,
-        message_id: progressMsg.result.message_id
-      }).catch(() => {});
-    }
-
-    if (buffers.length === 0) {
-      throw new Error("Не удалось сгенерировать изображения");
-    }
-
-    // Создаем коллаж
-    let collageBuffer;
-    let filename;
-    
-    if (buffers.length <= 2) {
-      // 1x2 коллаж
-      const resized = await Promise.all(buffers.map(b => sharp(b).resize(512, 512).toBuffer()));
-      collageBuffer = await sharp({
-        create: { width: 1024, height: 512, channels: 3, background: 'white' }
-      }).composite(
-        resized.map((b, i) => ({ input: b, left: i * 512, top: 0 }))
-      ).jpeg({ quality: 90 }).toBuffer();
-      filename = 'hairstyles_collage.jpg';
-    } else {
-      // 2x2 коллаж
-      const resized = await Promise.all(buffers.map(b => sharp(b).resize(512, 512).toBuffer()));
-      collageBuffer = await sharp({
-        create: { width: 1024, height: 1024, channels: 3, background: 'white' }
-      }).composite(
-        resized.map((b, i) => ({ 
-          input: b, 
-          left: (i % 2) * 512, 
-          top: Math.floor(i / 2) * 512 
-        }))
-      ).jpeg({ quality: 90 }).toBuffer();
-      filename = 'hairstyles_collage.jpg';
-    }
-
-    // Отправляем коллаж
-    const form = new FormData();
-    form.append('chat_id', chatId);
-    form.append('caption', `✅ Ваши ${buffers.length} варианта стрижек\nТариф: ${state.mode.toUpperCase()}`);
-    form.append('document', collageBuffer, { filename });
-
-    await fetch(`${TELEGRAM_API}/sendDocument`, {
-      method: 'POST',
-      body: form,
-      headers: form.getHeaders()
-    });
-
-    await sendMessage(chatId, 
-      "✅ <b>Готово!</b>\n\n" +
-      "Ваши варианты стрижек отправлены выше.\n" +
-      "Вы можете:\n" +
-      "• Сохранить изображения\n" +
-      "• Показать стилисту\n" +
-      "• Попробовать другой тариф\n\n" +
-      "Спасибо за использование HAIRbot! 💇‍♀️",
-      MAIN_KEYBOARD
-    );
-
-    clearUserState(userId);
-    
-  } catch (error) {
-    console.error("❌ Ошибка генерации изображений:", error.message);
-    
-    await sendMessage(chatId,
-      "❌ <b>Ошибка генерации изображений</b>\n\n" +
-      "Возможные причины:\n" +
-      "• Проблемы с сетью\n" +
-      "• Ограничения OpenAI\n" +
-      "• Таймаут запроса\n\n" +
-      "Попробуйте позже или выберите другой тариф.",
-      BACK_KEYBOARD
-    );
-  }
-}
-
-// ================== UPDATE HANDLER ==================
-async function handleUpdate(update) {
-  console.log(`📨 Обработка update: ${update.update_id}`);
-  
-  try {
-    // Обработка сообщений
-    if (update.message) {
-      const userId = update.message.from.id;
-      const chatId = update.message.chat.id;
-      
-      if (update.message.text === '/start') {
-        await handleStart(userId, chatId);
-        return;
-      }
-      
-      if (update.message.photo && update.message.photo.length > 0) {
-        const photo = update.message.photo[update.message.photo.length - 1];
-        await handlePhoto(userId, chatId, photo);
-        return;
-      }
-      
-      if (update.message.text) {
-        await sendMessage(chatId, 
-          "🤖 Отправьте /start для начала работы\n" +
-          "Или выберите тариф в меню.",
-          MAIN_KEYBOARD
-        );
-        return;
-      }
-    }
-    
-    // Обработка callback-запросов (кнопок)
-    if (update.callback_query) {
-      const callback = update.callback_query;
-      const userId = callback.from.id;
-      const chatId = callback.message.chat.id;
-      const data = callback.data;
-      
-      // Быстрый ответ Telegram
-      await answerCallbackQuery(callback.id);
-      
-      console.log(`🔄 Callback от пользователя ${userId}: ${data}`);
-      
-      // Обработка команд меню
-      if (data === 'menu') {
-        await handleStart(userId, chatId);
-      }
-      else if (data === 'about_service') {
-        await handleAboutService(userId, chatId);
-      }
-      else if (data === 'tariffs_info') {
-        await handleTariffsInfo(userId, chatId);
-      }
-      else if (data === 'payment_info') {
-        await handlePaymentInfo(userId, chatId);
-      }
-      else if (data === 'examples') {
-        await handleExamples(userId, chatId);
-      }
-      else if (data === 'payment_sbp') {
-        await sendMessage(chatId,
-          "📱 <b>Оплата через СБП</b>\n\n" +
-          "Для оплаты через СБП:\n" +
-          "1. Используйте номер телефона: +7 XXX XXX XX XX\n" +
-          "2. Укажите сумму тарифа\n" +
-          "3. В комментарии укажите ваш ID: " + userId + "\n\n" +
-          "После оплаты нажмите '✅ Я оплатил(а)'",
-          PAYMENT_KEYBOARD
-        );
-      }
-      else if (data === 'payment_confirmed') {
-        const state = userState.get(userId);
-        if (state?.awaitingPayment && state?.selectedTariff) {
-          await sendMessage(chatId,
-            "✅ <b>Спасибо за оплату!</b>\n\n" +
-            "Тариф активирован.\n" +
-            "Теперь отправьте фото лица для анализа:",
-            BACK_KEYBOARD
-          );
-          setUserState(userId, { 
-            mode: state.selectedTariff, 
-            awaitingPhoto: true,
-            awaitingPayment: false 
-          });
-        } else {
-          await sendMessage(chatId,
-            "❌ <b>Не найдена информация об оплате</b>\n\n" +
-            "Пожалуйста:\n" +
-            "1. Выберите тариф\n" +
-            "2. Произведите оплату\n" +
-            "3. Затем нажмите эту кнопку",
-            MAIN_KEYBOARD
-          );
+    if (!hasConsents) {
+      // Если почему-то согласий нет - просим их
+      await sendMessage(chatId,
+        `✅ <b>Оплата подтверждена!</b>\n` +
+        `❌ <b>Но отсутствуют согласия на обработку данных</b>\n\n` +
+        `Пройдите процедуру согласия, чтобы начать анализ:`,
+        {
+          inline_keyboard: [
+            [{ text: "📝 Пройти процедуру согласия", callback_data: `consent_before_pay_${tariff}` }]
+          ]
         }
-      }
-      else if (data.startsWith('mode_')) {
-        const mode = data.replace('mode_', '');
-        await handleModeSelection(userId, chatId, mode);
-      }
-      else if (data === 'generate_images') {
-        await handleGenerateImages(userId, chatId);
-      }
-      else if (data === 'get_pdf') {
-        await sendMessage(chatId,
-          "📄 <b>PDF-отчет</b>\n\n" +
-          "Функция PDF-отчета доступна в тарифах PRO и PREMIUM.\n" +
-          "Отчет будет доступен после генерации изображений.",
-          BACK_KEYBOARD
-        );
-      }
-      else {
-        await sendMessage(chatId, "❌ Неизвестная команда", BACK_KEYBOARD);
-      }
-    }
-    
-  } catch (error) {
-    console.error("❌ Ошибка обработки update:", error.message);
-    console.error("Stack:", error.stack);
-  }
-}
-
-// ================== WEBHOOK ENDPOINT ==================
-app.post("/webhook", async (req, res) => {
-  console.log(`🤖 Webhook получен в ${new Date().toISOString()}`);
-  
-  // Всегда отвечаем сразу Telegram
-  res.status(200).send('OK');
-  
-  // Асинхронно обрабатываем update
-  if (req.body && req.body.update_id) {
-    const updateId = req.body.update_id;
-    
-    // Базовая защита от дубликатов
-    if (seenUpdateIds.has(updateId)) {
-      console.log(`⏭️ Пропускаем дубликат update ${updateId}`);
+      );
       return;
     }
     
-    seenUpdateIds.add(updateId);
-    setTimeout(() => seenUpdateIds.delete(updateId), 60000);
+    // Все готово - просим фото
+    await sendMessage(chatId,
+      `✅ <b>Оплата подтверждена!</b>\n` +
+      `Тариф "${tariff.toUpperCase()}" активирован.\n\n` +
+      `📸 <b>Отправьте фото лица для анализа:</b>\n` +
+      `• Лицо анфас\n` +
+      `• Хорошее освещение\n` +
+      `• Чёткое изображение`,
+      BACK_KEYBOARD
+    );
     
-    try {
-      await handleUpdate(req.body);
-      console.log(`✅ Обработан update ${updateId}`);
-    } catch (error) {
-      console.error(`❌ Ошибка обработки update ${updateId}:`, error);
-    }
-  } else {
-    console.log("⚠️ Пустое тело запроса webhook");
+    setUserState(userId, {
+      mode: tariff,
+      awaitingPhoto: true
+    });
+    
+  } catch (error) {
+    console.error("❌ Ошибка обработки платежа:", error.message);
+    await sendMessage(chatId, "❌ Ошибка обработки платежа", MAIN_KEYBOARD);
   }
-});
-
-// ================== START SERVER ==================
-app.listen(PORT, () => {
-  console.log(`
-🎉 HAIRbot запущен!
-📍 Порт: ${PORT}
-🌐 URL: https://hairstyle-bot.onrender.com
-🏥 Health: https://hairstyle-bot.onrender.com/health
-📨 Webhook: https://hairstyle-bot.onrender.com/webhook
-🤖 Бот готов к работе!
-  `);
-  
-  // Проверяем ключи
-  if (process.env.OPENAI_API_KEY) {
-    console.log("✅ OpenAI API Key: настроен");
-  } else {
-    console.log("❌ OpenAI API Key: ОТСУТСТВУЕТ");
-  }
-  
-  if (process.env.TELEGRAM_TOKEN) {
-    console.log("✅ Telegram Token: настроен");
-  } else {
-    console.log("❌ Telegram Token: ОТСУТСТВУЕТ");
-  }
-});
+}
