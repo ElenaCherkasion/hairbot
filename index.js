@@ -858,4 +858,44 @@ async function handleUpdate(update) {
         case 'consent_no':
           await BotHandlers.handleConsentResponse(userId, chatId, false, callback.id);
           break;
-       
+        default:
+          // Обработка consent_<tariff>
+          if (data.startsWith('consent_')) {
+            const tariff = data.replace('consent_', '');
+            if (['free', 'basic', 'pro', 'premium'].includes(tariff)) {
+              await BotHandlers.startConsentFlow(userId, chatId, tariff);
+            }
+          }
+          break;
+      }
+    }
+    
+  } catch (error) {
+    console.error("❌ Ошибка обработки update:", error.message, error.stack);
+  }
+}
+
+// ================== EXPRESS APP ==================
+const app = express();
+app.use(express.json({ limit: "10mb" }));
+
+app.get("/health", (req, res) => {
+  res.status(200).json({ 
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    db_connected: db.connected,
+    has_provider_token: !!PROVIDER_TOKEN,
+    test_prices: USE_TEST_PRICES,
+    support_email: SUPPORT_EMAIL
+  });
+});
+
+app.get("/", (req, res) => {
+  res.send("🤖 HAIRbot is running");
+});
+
+app.post("/webhook", async (req, res) => {
+  res.status(200).send('OK');
+  
+  if (req.body?.update_id) {
+    handleUpdate(req.body
