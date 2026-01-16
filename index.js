@@ -12,10 +12,41 @@ const PORT = process.env.PORT || 3000;
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const PROVIDER_TOKEN = process.env.PROVIDER_TOKEN;
 const PRIVACY_POLICY_URL = process.env.PRIVACY_POLICY_URL || "https://ваш-сайт.ru/privacy";
+const SUPPORT_EMAIL = "cherkashina720@gmail.com"; // Обновленный email
+const SUPPORT_TELEGRAM = process.env.SUPPORT_TELEGRAM || "https://t.me/your_support";
+
+// ТЕСТОВЫЕ ЦЕНЫ (в копейках)
+const TEST_PRICES = {
+  basic: 500,    // 5 рублей = 500 копеек
+  pro: 1000,     // 10 рублей = 1000 копеек
+  premium: 1500  // 15 рублей = 1500 копеек
+};
+
+const ORIGINAL_PRICES = {
+  basic: 29900,
+  pro: 59900,
+  premium: 99900
+};
+
+// Используем тестовые цены
+const USE_TEST_PRICES = process.env.NODE_ENV !== 'production';
+
+const getPrice = (tariff) => {
+  if (USE_TEST_PRICES) {
+    console.log(`💰 Используется ТЕСТОВАЯ цена для ${tariff}: ${TEST_PRICES[tariff] / 100}₽`);
+    return TEST_PRICES[tariff];
+  }
+  return ORIGINAL_PRICES[tariff];
+};
+
+const getPriceDisplay = (tariff) => {
+  const price = getPrice(tariff);
+  return `${price / 100}₽`;
+};
 
 // Валидация переменных окружения
 const validateEnv = () => {
-  const required = ['TELEGRAM_TOKEN', 'OPENAI_API_KEY'];
+  const required = ['TELEGRAM_TOKEN', 'OPENAI_API_KEY', 'DATABASE_URL'];
   const missing = required.filter(key => !process.env[key]);
   
   if (missing.length > 0) {
@@ -24,6 +55,8 @@ const validateEnv = () => {
   }
   
   console.log("✅ Все обязательные переменные окружения установлены");
+  console.log(`💰 Режим цен: ${USE_TEST_PRICES ? 'ТЕСТОВЫЙ (5/10/15₽)' : 'ПРОДАКШЕН (299/599/999₽)'}`);
+  console.log(`📧 Email поддержки: ${SUPPORT_EMAIL}`);
 };
 
 validateEnv();
@@ -53,7 +86,6 @@ class UserStateManager {
       return true;
     }
     this.seenUpdateIds.add(updateId);
-    // Очищаем через 1 минуту
     setTimeout(() => this.seenUpdateIds.delete(updateId), 60000);
     return false;
   }
@@ -85,7 +117,7 @@ class DatabaseService {
         connectionTimeoutMillis: 5000
       });
 
-      await this.pool.query('SELECT 1'); // Проверка подключения
+      await this.pool.query('SELECT 1');
       console.log("✅ PostgreSQL подключен успешно");
       
       await this.createTables();
@@ -123,6 +155,7 @@ class DatabaseService {
         granted_at TIMESTAMP DEFAULT NOW(),
         UNIQUE(user_id, consent_type)
       )`,
+      
       `CREATE TABLE IF NOT EXISTS payments (
         id SERIAL PRIMARY KEY,
         user_id BIGINT NOT NULL,
@@ -131,12 +164,25 @@ class DatabaseService {
         payment_id VARCHAR(255),
         status VARCHAR(50) DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT NOW()
+      )`,
+      
+      `CREATE TABLE IF NOT EXISTS free_usage (
+        user_id BIGINT PRIMARY KEY,
+        used_at TIMESTAMP DEFAULT NOW()
       )`
     ];
 
     for (const tableSQL of tables) {
       await this.query(tableSQL);
     }
+
+    await this.query(`
+      CREATE INDEX IF NOT EXISTS idx_user_consents_user_id ON user_consents(user_id);
+      CREATE INDEX IF NOT EXISTS idx_user_consents_granted ON user_consents(granted);
+      CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
+      CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
+      CREATE INDEX IF NOT EXISTS idx_free_usage_user_id ON free_usage(user_id);
+    `);
 
     console.log("✅ Таблицы базы данных готовы");
   }
@@ -274,14 +320,17 @@ class TelegramService {
   }
 
   async sendInvoice(userId, chatId, tariff) {
-    const tariffs = {
-      'basic': { price: 29900, name: "BASIC", description: "Полный анализ + 3 рекомендации" },
-      'pro': { price: 59900, name: "PRO", description: "Анализ с цветотипом + PDF" },
-      'premium': { price: 99900, name: "PREMIUM", description: "Расширенный анализ + приоритет" }
+    const tariffNames = {
+      'basic': { name: "BASIC", description: "Полный анализ + 3 рекомендации" },
+      'pro': { name: "PRO", description: "Анализ с цветотипом + PDF" },
+      'premium': { name: "PREMIUM", description: "Расширенный анализ + приоритет" }
     };
     
-    const tariffInfo = tariffs[tariff];
+    const tariffInfo = tariffNames[tariff];
     if (!tariffInfo) return { ok: false };
+    
+    const price = getPrice(tariff);
+    const priceDisplay = getPriceDisplay(tariff);
     
     const payload = `${tariff}_${userId}_${Date.now()}`;
     
@@ -292,29 +341,41 @@ class TelegramService {
     
     return this.request('sendInvoice', {
       chat_id: chatId,
-      title: `HAIRbot - Тариф ${tariffInfo.name}`,
+      title: `HAIRbot - Тариф ${tariffInfo.name} (${priceDisplay})`,
       description: tariffInfo.description,
       payload: payload,
       provider_token: PROVIDER_TOKEN,
       currency: "RUB",
-      prices: [{ label: "Тариф", amount: tariffInfo.price }]
+      prices: [{ label: "Тариф", amount: price }]
     });
   }
 }
 
 const telegram = new TelegramService();
 
-// ================== KEYBOARDS ==================
+// ================== KEYBOARDS (Вариант 3 с категориями) ==================
 const Keyboards = {
   main: {
     inline_keyboard: [
-      [{ text: "📋 О сервисе", callback_data: "about" }],
-      [{ text: "💰 Тарифы", callback_data: "tariffs" }],
-      [{ text: "🎁 Бесплатный анализ", callback_data: "free" }],
-      [{ text: "💎 BASIC - 299₽", callback_data: "basic" }],
-      [{ text: "✨ PRO - 599₽", callback_data: "pro" }],
-      [{ text: "👑 PREMIUM - 999₽", callback_data: "premium" }],
-      [{ text: "🔒 Политика конфиденциальности", url: PRIVACY_POLICY_URL }]
+      // КАТЕГОРИЯ: ИНФОРМАЦИЯ
+      [{ text: "📚 О сервисе HAIRbot", callback_data: "about" }],
+      [{ text: "📖 Примеры разборов", callback_data: "examples" }],
+      
+      // КАТЕГОРИЯ: ВЫБОР ТАРИФА (с тестовыми ценами)
+      [{ text: "🎁 БЕСПЛАТНЫЙ АНАЛИЗ", callback_data: "free" }],
+      [{ text: `💎 BASIC - ${getPriceDisplay('basic')} (тестовая цена)`, callback_data: "basic" }],
+      [{ text: `✨ PRO - ${getPriceDisplay('pro')} (тестовая цена)`, callback_data: "pro" }],
+      [{ text: `👑 PREMIUM - ${getPriceDisplay('premium')} (тестовая цена)`, callback_data: "premium" }],
+      
+      // КАТЕГОРИЯ: ДОПОЛНИТЕЛЬНО
+      [
+        { text: "💰 Сравнить тарифы", callback_data: "tariffs" },
+        { text: "🔒 Политика", url: PRIVACY_POLICY_URL }
+      ],
+      [
+        { text: "📧 Написать на почту", url: `mailto:${SUPPORT_EMAIL}` },
+        { text: "📞 Telegram поддержка", url: SUPPORT_TELEGRAM }
+      ]
     ]
   },
   
@@ -333,6 +394,7 @@ const Keyboards = {
     const buttons = [
       [{ text: "📝 Пройти процедуру согласия", callback_data: tariff ? `consent_${tariff}` : "consent" }],
       [{ text: "🔒 Политика", url: PRIVACY_POLICY_URL }],
+      [{ text: "📧 Поддержка", url: `mailto:${SUPPORT_EMAIL}` }],
       [{ text: "🏠 Главное меню", callback_data: "menu" }]
     ];
     
@@ -346,6 +408,14 @@ class BotHandlers {
     const hasConsents = await consentService.hasAllConsents(userId);
     
     let message = `👋 <b>Добро пожаловать в HAIRbot!</b>\n\n`;
+    
+    if (USE_TEST_PRICES) {
+      message += `💰 <b>ТЕСТОВЫЙ РЕЖИМ</b>\n`;
+      message += `Цены для тестирования:\n`;
+      message += `• BASIC: ${getPriceDisplay('basic')}\n`;
+      message += `• PRO: ${getPriceDisplay('pro')}\n`;
+      message += `• PREMIUM: ${getPriceDisplay('premium')}\n\n`;
+    }
     
     if (hasConsents) {
       message += `✅ <b>Ваши согласия получены</b>\n\n`;
@@ -370,32 +440,74 @@ class BotHandlers {
       `🔒 <b>Конфиденциальность:</b>\n` +
       `• Фото удаляются после анализа\n` +
       `• Личность не определяется\n` +
-      `• Данные не передаются третьим лицам без согласия`;
+      `• Данные не передаются третьим лицам без согласия\n\n` +
+      `📧 <b>Поддержка:</b> ${SUPPORT_EMAIL}`;
     
     await telegram.sendMessage(chatId, message, Keyboards.back);
   }
 
   static async tariffs(userId, chatId) {
     const message = 
-      `💰 <b>Тарифы HAIRbot</b>\n\n` +
+      `💰 <b>Тарифы HAIRbot</b>\n\n`;
+    
+    if (USE_TEST_PRICES) {
+      message += `🎯 <b>ТЕСТОВЫЕ ЦЕНЫ (для проверки работы)</b>\n\n`;
+    }
+    
+    message +=
       `🎁 <b>БЕСПЛАТНЫЙ</b> (1 раз)\n` +
       `• Определение формы лица\n` +
       `• 2 рекомендации\n` +
       `• 2 изображения\n\n` +
-      `💎 <b>BASIC - 299₽</b>\n` +
-      `• Полный анализ\n` +
-      `• 3 рекомендации\n` +
-      `• 3 изображения\n\n` +
-      `✨ <b>PRO - 599₽</b>\n` +
-      `• Анализ с цветотипом\n` +
-      `• 4 рекомендации\n` +
+      
+      `💎 <b>BASIC - ${getPriceDisplay('basic')}</b>\n` +
+      `• Полный анализ лица\n` +
+      `• 3 рекомендации стрижек\n` +
+      `• 3 изображения\n` +
+      `• Сохранение в истории\n\n` +
+      
+      `✨ <b>PRO - ${getPriceDisplay('pro')}</b>\n` +
+      `• Всё из BASIC +\n` +
+      `• Анализ цветотипа\n` +
+      `• 4 рекомендации с цветами\n` +
       `• PDF-отчет\n\n` +
-      `👑 <b>PREMIUM - 999₽</b>\n` +
-      `• Расширенный анализ\n` +
+      
+      `👑 <b>PREMIUM - ${getPriceDisplay('premium')}</b>\n` +
+      `• Всё из PRO +\n` +
+      `• Учёт текстуры волос\n` +
       `• 5 рекомендаций\n` +
-      `• Приоритетная обработка`;
+      `• Приоритетная обработка\n\n`;
+    
+    if (USE_TEST_PRICES) {
+      message += `⚠️ <i>Это тестовые цены для проверки работы бота.</i>\n`;
+      message += `<i>После тестирования цены будут изменены на стандартные.</i>\n\n`;
+    }
+    
+    message += `💳 <b>Оплата внутри Telegram:</b> картой, ЮMoney, СБП\n\n` +
+              `📧 <b>Поддержка:</b> ${SUPPORT_EMAIL}`;
     
     await telegram.sendMessage(chatId, message, Keyboards.main);
+  }
+
+  static async examples(userId, chatId) {
+    const message = 
+      `📖 <b>Примеры разборов</b>\n\n` +
+      `Посмотрите, как работает HAIRbot на реальных примерах:\n\n` +
+      `👩 <b>Пример 1:</b> Овальное лицо\n` +
+      `• Форма: овальная\n` +
+      `• Рекомендации: каскад, длинный боб\n` +
+      `• Цвет: холодные каштановые оттенки\n\n` +
+      `👩 <b>Пример 2:</b> Круглое лицо\n` +
+      `• Форма: круглая\n` +
+      `• Рекомендации: асимметричная стрижка\n` +
+      `• Цвет: медовые блики\n\n` +
+      `👩 <b>Пример 3:</b> Квадратное лицо\n` +
+      `• Форма: квадратная\n` +
+      `• Рекомендации: длинные слои\n` +
+      `• Цвет: шоколадный\n\n` +
+      `📧 <b>Вопросы?</b> Пишите: ${SUPPORT_EMAIL}`;
+    
+    await telegram.sendMessage(chatId, message, Keyboards.back);
   }
 
   static async handleTariff(userId, chatId, tariff) {
@@ -426,13 +538,23 @@ class BotHandlers {
         return;
       }
       
+      // Показываем тестовую цену
+      const priceDisplay = getPriceDisplay(tariff);
+      await telegram.sendMessage(chatId,
+        `💳 <b>Оплата тарифа ${tariff.toUpperCase()}</b>\n\n` +
+        `Сумма к оплате: <b>${priceDisplay}</b>\n` +
+        `${USE_TEST_PRICES ? '(тестовая цена)' : ''}\n\n` +
+        `Нажмите кнопку ниже для оплаты:`,
+        Keyboards.back
+      );
+      
       await telegram.sendInvoice(userId, chatId, tariff);
     }
   }
 
   static async startFreeAnalysis(userId, chatId) {
     // Проверяем использовал ли уже free
-    const result = await db.query("SELECT 1 FROM payments WHERE user_id = $1 AND tariff = 'free'", [userId]);
+    const result = await db.query("SELECT 1 FROM free_usage WHERE user_id = $1", [userId]);
     
     if (result.rowCount > 0) {
       await telegram.sendMessage(chatId,
@@ -489,8 +611,8 @@ class BotHandlers {
     if (!granted) {
       await telegram.sendMessage(chatId,
         `❌ <b>Согласие не получено</b>\n\n` +
-        `Для использования сервиса необходимо дать все согласия.\n` +
-        `Вы можете ознакомиться с политикой конфиденциальности.`,
+        `Для использования сервиса необходимо дать все согласия.\n\n` +
+        `📧 <b>Вопросы?</b> Пишите: ${SUPPORT_EMAIL}`,
         Keyboards.requireConsent()
       );
       userState.clear(userId);
@@ -514,6 +636,15 @@ class BotHandlers {
       if (tariff === 'free') {
         await BotHandlers.startFreeAnalysis(userId, chatId);
       } else if (tariff && ['basic', 'pro', 'premium'].includes(tariff)) {
+        const priceDisplay = getPriceDisplay(tariff);
+        await telegram.sendMessage(chatId,
+          `✅ <b>Все согласия получены!</b>\n\n` +
+          `Теперь вы можете оплатить тариф <b>${tariff.toUpperCase()}</b>.\n` +
+          `Сумма: <b>${priceDisplay}</b>\n` +
+          `${USE_TEST_PRICES ? '(тестовая цена)' : ''}\n\n` +
+          `Нажмите кнопку ниже для оплаты:`,
+          Keyboards.back
+        );
         await telegram.sendInvoice(userId, chatId, tariff);
       } else {
         await telegram.sendMessage(chatId,
@@ -550,18 +681,31 @@ class BotHandlers {
       }
       
       // Сохраняем платеж
+      const amount = paymentData.total_amount / 100; // Конвертируем в рубли
       await db.query(
-        `INSERT INTO payments (user_id, tariff, status, amount)
-         VALUES ($1, $2, 'completed', $3)`,
-        [userId, tariff, paymentData.total_amount / 100]
+        `INSERT INTO payments (user_id, tariff, status, amount, payment_id)
+         VALUES ($1, $2, 'completed', $3, $4)`,
+        [userId, tariff, amount, `telegram_${paymentData.telegram_payment_charge_id || Date.now()}`]
       );
+      
+      console.log(`✅ Платёж сохранён: user ${userId}, тариф ${tariff}, сумма ${amount}₽`);
+      
+      // Если это free тариф - отмечаем использование
+      if (tariff === 'free') {
+        await db.query(
+          `INSERT INTO free_usage (user_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+          [userId]
+        );
+      }
       
       // Начинаем анализ
       userState.set(userId, { mode: tariff, awaitingPhoto: true });
       
       await telegram.sendMessage(chatId,
-        `✅ <b>Оплата подтверждена!</b>\n` +
-        `Тариф "${tariff.toUpperCase()}" активирован.\n\n` +
+        `✅ <b>Оплата подтверждена!</b>\n\n` +
+        `Тариф: <b>${tariff.toUpperCase()}</b>\n` +
+        `Сумма: <b>${amount}₽</b>\n` +
+        `Статус: <b>активирован</b>\n\n` +
         `📸 <b>Отправьте фото лица для анализа:</b>\n` +
         `• Лицо анфас\n` +
         `• Хорошее освещение\n` +
@@ -571,7 +715,12 @@ class BotHandlers {
       
     } catch (error) {
       console.error("❌ Ошибка обработки платежа:", error.message);
-      await telegram.sendMessage(chatId, "❌ Ошибка обработки платежа", Keyboards.main);
+      await telegram.sendMessage(chatId,
+        `❌ <b>Ошибка обработки платежа</b>\n\n` +
+        `Пожалуйста, обратитесь в поддержку:\n` +
+        `📧 ${SUPPORT_EMAIL}`,
+        Keyboards.main
+      );
     }
   }
 
@@ -604,13 +753,27 @@ class BotHandlers {
     // Начинаем обработку фото
     await telegram.sendMessage(chatId,
       `⏳ <b>Начинаю анализ...</b>\n\n` +
-      `Тариф: ${tariff.toUpperCase()}\n` +
-      `Пожалуйста, подождите...`,
+      `Тариф: <b>${tariff.toUpperCase()}</b>\n` +
+      `Пожалуйста, подождите 30-60 секунд...`,
       Keyboards.back
     );
     
-    // Здесь будет логика анализа через OpenAI
+    // TODO: Здесь будет логика анализа через OpenAI
     // await analyzeAndSendResults(userId, chatId, photo, tariff);
+    
+    // Временно - заглушка
+    setTimeout(async () => {
+      await telegram.sendMessage(chatId,
+        `✅ <b>Анализ завершён!</b>\n\n` +
+        `К сожалению, модуль анализа временно недоступен.\n\n` +
+        `📧 <b>Обратитесь в поддержку:</b>\n` +
+        `${SUPPORT_EMAIL}\n\n` +
+        `Мы вернём вам средства за платные тарифы.`,
+        Keyboards.main
+      );
+      
+      userState.clear(userId);
+    }, 3000);
   }
 }
 
@@ -675,6 +838,9 @@ async function handleUpdate(update) {
         case 'tariffs':
           await BotHandlers.tariffs(userId, chatId);
           break;
+        case 'examples':
+          await BotHandlers.examples(userId, chatId);
+          break;
         case 'free':
           await BotHandlers.handleTariff(userId, chatId, 'free');
           break;
@@ -718,40 +884,14 @@ app.get("/health", (req, res) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     db_connected: db.connected,
-    has_provider_token: !!PROVIDER_TOKEN
+    has_provider_token: !!PROVIDER_TOKEN,
+    test_prices: USE_TEST_PRICES,
+    support_email: SUPPORT_EMAIL
   });
 });
 
 app.get("/", (req, res) => {
-  res.send("🤖 HAIRbot is running");
-});
-
-app.post("/webhook", async (req, res) => {
-  res.status(200).send('OK');
-  
-  if (req.body?.update_id) {
-    // Асинхронная обработка без ожидания
-    handleUpdate(req.body).catch(error => {
-      console.error("❌ Необработанная ошибка в handleUpdate:", error);
-    });
-  }
-});
-
-// ================== STARTUP ==================
-async function start() {
-  await db.initialize();
-  
-  app.listen(PORT, () => {
-    console.log(`
-🎉 HAIRbot запущен!
-📍 Порт: ${PORT}
-🔗 Health: /health
-📨 Webhook: /webhook
-    `);
-  });
-}
-
-start().catch(error => {
-  console.error("❌ Ошибка запуска приложения:", error);
-  process.exit(1);
-});
+  res.send(`
+    🤖 HAIRbot is running
+    📧 Поддержка: ${SUPPORT_EMAIL}
+    💰 Режим: ${USE_TEST_PR
