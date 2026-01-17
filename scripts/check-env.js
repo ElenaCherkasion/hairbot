@@ -8,135 +8,177 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Читаем .env.example для получения списка обязательных переменных
-const envExamplePath = path.join(__dirname, '..', '.env.example');
-let requiredEnvVars = [];
+console.log('🔍 Проверка переменных окружения HairBot...\n');
 
-try {
-  const envExampleContent = fs.readFileSync(envExamplePath, 'utf8');
-  requiredEnvVars = envExampleContent
-    .split('\n')
-    .filter(line => line.trim() && !line.startsWith('#'))
-    .map(line => line.split('=')[0])
-    .filter(Boolean);
-} catch (error) {
-  console.warn('⚠️  Файл .env.example не найден, использую базовый список');
-  requiredEnvVars = [
-    'TELEGRAM_BOT_TOKEN',
-    'OPENAI_API_KEY',
-    'DATABASE_URL',
-    'NODE_ENV',
-    'PORT'
-  ];
-}
-
-// Добавляем дополнительные обязательные переменные
-const additionalRequiredVars = [
+// Основные критические переменные для бота
+const CRITICAL_VARS = [
   'TELEGRAM_BOT_TOKEN',
   'OPENAI_API_KEY'
 ];
 
-requiredEnvVars = [...new Set([...requiredEnvVars, ...additionalRequiredVars])];
+// Рекомендованные для базовой работы
+const RECOMMENDED_VARS = [
+  'DATABASE_URL',
+  'NODE_ENV',
+  'PORT',
+  'LOG_LEVEL',
+  'LOG_FILE'
+];
 
-console.log('🔍 Проверка переменных окружения...\n');
+// Дополнительные для продвинутых функций
+const OPTIONAL_VARS = [
+  'WEBHOOK_URL',
+  'WEBHOOK_SECRET',
+  'ADMIN_USER_ID',
+  'PAYMENT_PROVIDER_TOKEN',
+  'ENABLE_ANALYTICS',
+  'REDIS_URL'
+];
 
-const missingVars = [];
-const optionalVars = [];
-const presentVars = [];
+// Проверка наличия .env файла
+const envPath = path.join(__dirname, '..', '.env');
+const envExamplePath = path.join(__dirname, '..', '.env.example');
 
-for (const varName of requiredEnvVars) {
-  if (process.env[varName]) {
-    presentVars.push(varName);
-  } else if (varName.includes('OPTIONAL') || varName.includes('EXAMPLE')) {
-    optionalVars.push(varName);
-  } else {
-    missingVars.push(varName);
-  }
-}
-
-// Вывод результатов
-if (presentVars.length > 0) {
-  console.log('✅ Найдены переменные:');
-  presentVars.forEach(varName => {
-    const value = process.env[varName];
-    const maskedValue = varName.includes('TOKEN') || varName.includes('KEY') || varName.includes('SECRET')
-      ? value.substring(0, 8) + '...' + value.substring(value.length - 4)
-      : value;
-    console.log(`   ${varName}=${maskedValue}`);
-  });
-  console.log('');
-}
-
-if (optionalVars.length > 0) {
-  console.log('⚠️  Опциональные переменные (не обязательны):');
-  optionalVars.forEach(varName => {
-    console.log(`   ${varName}`);
-  });
-  console.log('');
-}
-
-if (missingVars.length > 0) {
-  console.error('❌ ОТСУТСТВУЮТ КРИТИЧЕСКИЕ ПЕРЕМЕННЫЕ:');
-  missingVars.forEach(varName => {
-    console.error(`   - ${varName}`);
-  });
-  console.error('\n💡 Решение:');
-  console.error('   1. Скопируйте .env.example в .env');
-  console.error('   2. Заполните недостающие значения в .env файле');
-  console.error('   3. Перезапустите приложение\n');
+if (!fs.existsSync(envPath)) {
+  console.error('❌ Файл .env не найден!');
+  console.log('\n💡 Решение:');
+  console.log('   1. Скопируйте .env.example в .env:');
+  console.log('      cp .env.example .env');
+  console.log('   2. Заполните значения в .env файле');
+  console.log('   3. Запустите проверку снова\n');
   
-  // Предлагаем создать .env файл
-  const envPath = path.join(__dirname, '..', '.env');
-  if (!fs.existsSync(envPath) && fs.existsSync(envExamplePath)) {
-    const createEnv = process.argv.includes('--create') || process.argv.includes('-c');
-    if (createEnv) {
-      try {
-        fs.copyFileSync(envExamplePath, envPath);
-        console.log('📄 Создан файл .env на основе .env.example');
-        console.log('⚠️  Отредактируйте .env и добавьте реальные значения!');
-      } catch (error) {
-        console.error('Ошибка при создании .env файла:', error.message);
+  // Предлагаем создать .env из примера
+  if (fs.existsSync(envExamplePath)) {
+    const readline = await import('readline');
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+    
+    rl.question('Создать .env файл из .env.example? (y/n): ', (answer) => {
+      if (answer.toLowerCase() === 'y') {
+        try {
+          fs.copyFileSync(envExamplePath, envPath);
+          console.log('✅ Файл .env создан');
+          console.log('⚠️  Отредактируйте .env и добавьте реальные значения!');
+        } catch (error) {
+          console.error('Ошибка при создании .env:', error.message);
+        }
       }
-    } else {
-      console.log('💡 Используйте: npm run check-env -- --create для создания .env файла');
-    }
+      rl.close();
+    });
   }
-  
   process.exit(1);
 }
 
-console.log('🎉 Все переменные окружения настроены корректно!');
-console.log(`📊 Всего проверено: ${presentVars.length + missingVars.length + optionalVars.length} переменных`);
-console.log(`   ✅ Найдено: ${presentVars.length}`);
-console.log(`   ⚠️  Опциональных: ${optionalVars.length}`);
-console.log(`   ❌ Отсутствует: ${missingVars.length}`);
+// Загружаем .env файл
+import dotenv from 'dotenv';
+dotenv.config({ path: envPath });
 
-// Дополнительные проверки
-console.log('\n🔧 Дополнительные проверки:');
+console.log('📋 КРИТИЧЕСКИ ВАЖНЫЕ:');
+const missingCritical = [];
+CRITICAL_VARS.forEach(varName => {
+  if (process.env[varName]) {
+    const value = process.env[varName];
+    const maskedValue = varName.includes('TOKEN') || varName.includes('KEY') || varName.includes('SECRET')
+      ? '••••••••' + value.substring(value.length - 4)
+      : value;
+    console.log(`   ✅ ${varName}=${maskedValue}`);
+  } else {
+    console.log(`   ❌ ${varName}=НЕ УСТАНОВЛЕНА`);
+    missingCritical.push(varName);
+  }
+});
 
-// Проверка NODE_ENV
+console.log('\n📋 РЕКОМЕНДОВАННЫЕ:');
+const missingRecommended = [];
+RECOMMENDED_VARS.forEach(varName => {
+  if (process.env[varName]) {
+    console.log(`   ✅ ${varName}=${process.env[varName]}`);
+  } else {
+    console.log(`   ⚠️  ${varName}=НЕ УСТАНОВЛЕНА (используется значение по умолчанию)`);
+    missingRecommended.push(varName);
+  }
+});
+
+console.log('\n📋 ОПЦИОНАЛЬНЫЕ:');
+OPTIONAL_VARS.forEach(varName => {
+  if (process.env[varName]) {
+    console.log(`   ✅ ${varName}=установлена`);
+  } else {
+    console.log(`   ➖ ${varName}=не установлена`);
+  }
+});
+
+// Проверка специфичных значений
+console.log('\n🔧 ДОПОЛНИТЕЛЬНЫЕ ПРОВЕРКИ:');
+
+// NODE_ENV
 if (!process.env.NODE_ENV) {
-  console.warn('⚠️  NODE_ENV не установлен. По умолчанию: development');
   process.env.NODE_ENV = 'development';
-} else {
-  const validEnvs = ['development', 'production', 'test'];
-  if (!validEnvs.includes(process.env.NODE_ENV)) {
-    console.warn(`⚠️  NODE_ENV="${process.env.NODE_ENV}" не стандартный. Используйте: ${validEnvs.join(', ')}`);
-  }
+  console.log('   ⚠️  NODE_ENV не установлен, используется "development"');
+} else if (!['development', 'production', 'test'].includes(process.env.NODE_ENV)) {
+  console.log(`   ⚠️  NODE_ENV="${process.env.NODE_ENV}" нестандартное значение`);
 }
 
-// Проверка базы данных
+// DATABASE_URL
 if (process.env.DATABASE_URL) {
-  const dbUrl = process.env.DATABASE_URL;
-  if (dbUrl.includes('mysql://') || dbUrl.includes('postgresql://')) {
-    console.log('✅ Настроена внешняя база данных');
+  const dbUrl = process.env.DATABASE_URL.toLowerCase();
+  if (dbUrl.includes('mysql://')) {
+    console.log('   ✅ Используется MySQL база данных');
+  } else if (dbUrl.includes('postgres://') || dbUrl.includes('postgresql://')) {
+    console.log('   ✅ Используется PostgreSQL база данных');
   } else if (dbUrl.includes('sqlite://')) {
-    console.log('✅ Настроена SQLite база данных');
-  } else if (dbUrl.includes('file:')) {
-    console.log('✅ Настроена локальная база данных SQLite');
+    console.log('   ✅ Используется SQLite база данных');
+  } else if (dbUrl.startsWith('file:')) {
+    console.log('   ✅ Используется локальная SQLite база данных');
   }
 } else {
-  console.warn('⚠️  DATABASE_URL не установлен. Будет использована SQLite в памяти');
+  console.log('   ℹ️  DATABASE_URL не установлен - будет использована SQLite в памяти');
 }
 
-console.log('\n🚀 Проверка завершена успешно!');
+// Проверка директорий
+console.log('\n📁 ПРОВЕРКА ДИРЕКТОРИЙ:');
+const requiredDirs = [
+  { path: 'logs', optional: false },
+  { path: 'database', optional: true },
+  { path: 'backups', optional: true }
+];
+
+requiredDirs.forEach(dir => {
+  const dirPath = path.join(__dirname, '..', dir.path);
+  if (fs.existsSync(dirPath)) {
+    console.log(`   ✅ ${dir.path}/`);
+  } else if (!dir.optional) {
+    console.log(`   ⚠️  ${dir.path}/ - отсутствует, создаю...`);
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+});
+
+// Итог
+console.log('\n📊 ИТОГ ПРОВЕРКИ:');
+if (missingCritical.length === 0) {
+  console.log('✅ Все критические переменные установлены');
+  console.log('🚀 Бот готов к запуску!');
+  
+  if (missingRecommended.length > 0) {
+    console.log(`\n⚠️  Рекомендуется установить: ${missingRecommended.join(', ')}`);
+  }
+  
+  // Проверка подключения к базе данных (если установлена)
+  if (process.env.DATABASE_URL) {
+    try {
+      const { checkDatabaseConnection } = await import('../src/database/connection.js');
+      const isConnected = await checkDatabaseConnection();
+      if (isConnected) {
+        console.log('✅ Подключение к базе данных успешно');
+      }
+    } catch (error) {
+      console.log('ℹ️  Подключение к базе данных не проверено');
+    }
+  }
+} else {
+  console.error(`❌ Отсутствуют критические переменные: ${missingCritical.join(', ')}`);
+  console.error('   Бот не может быть запущен');
+  process.exit(1);
+}
