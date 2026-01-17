@@ -1,41 +1,43 @@
-// src/index.js - УПРОЩЕННАЯ РАБОЧАЯ ВЕРСИЯ
+#!/usr/bin/env node
+// src/index.js - ОСНОВНОЙ КОД БОТА
 
 console.log('🔧 Загрузка src/index.js...');
 
-// Экспортируем функцию ДО всех импортов и кода
+// ЭКСПОРТ ФУНКЦИИ В САМОМ НАЧАЛЕ (чтобы модуль всегда был валидным)
 export async function startBot() {
-  console.log('🚀 Функция startBot вызвана!');
+  console.log('🚀 Вызов функции startBot()');
   
   try {
-    // Импорты внутри функции (чтобы ошибки не мешали экспорту)
+    // Динамические импорты (безопаснее, чем статические)
     const { Telegraf, session } = await import('telegraf');
     const dotenv = await import('dotenv');
-    const { sequelize } = await import('./database/connection.js');
-    const logger = await import('./utils/logger.js');
+    const express = await import('express');
     
+    // Загрузка переменных окружения
     dotenv.default.config();
     
-    console.log('✅ Все модули загружены');
-    
-    // Проверка переменных
+    // Проверка обязательных переменных
     const botToken = process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
     const openaiKey = process.env.OPENAI_API_KEY;
     
-    if (!botToken || !openaiKey) {
-      throw new Error('Отсутствуют обязательные переменные окружения');
+    if (!botToken) {
+      throw new Error('TELEGRAM_TOKEN не установлен');
+    }
+    if (!openaiKey) {
+      console.warn('⚠️  OPENAI_API_KEY не установлен (некоторые функции не будут работать)');
     }
     
-    // Подключение к БД
-    await sequelize.authenticate();
-    console.log('✅ Подключение к БД установлено');
+    console.log('✅ Переменные окружения проверены');
     
-    // Создание бота
+    // Инициализация бота
     const bot = new Telegraf(botToken);
     bot.use(session());
     
-    // Простой middleware
+    // Middleware для логирования
     bot.use(async (ctx, next) => {
-      console.log(`📨 Сообщение от ${ctx.from?.id}`);
+      const userId = ctx.from?.id;
+      const username = ctx.from?.username;
+      console.log(`📨 Сообщение от @${username || 'unknown'} (${userId})`);
       await next();
     });
     
@@ -50,28 +52,56 @@ export async function startBot() {
     tariffsHandler.default(bot);
     callbackHandler.default(bot);
     
+    // Инициализация Express
+    const app = express.default();
+    const PORT = process.env.PORT || 3000;
+    
+    // Базовая конфигурация Express
+    app.use(express.json());
+    app.use(express.urlencoded({ extended: true }));
+    
+    // Health check endpoint
+    app.get('/health', (req, res) => {
+      res.json({
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        service: 'hairbot'
+      });
+    });
+    
+    // Запуск Express сервера
+    app.listen(PORT, () => {
+      console.log(`🚀 Express сервер запущен на порту ${PORT}`);
+      console.log(`📊 Health check: http://localhost:${PORT}/health`);
+    });
+    
     // Получение информации о боте
     const botInfo = await bot.telegram.getMe();
-    console.log(`🤖 Бот запущен: @${botInfo.username}`);
+    console.log(`🤖 Бот запущен: @${botInfo.username} (ID: ${botInfo.id})`);
     
-    // Запуск в режиме polling
-    bot.launch();
-    console.log('✅ Бот запущен в режиме polling');
+    // Запуск бота в режиме polling
+    bot.launch({
+      dropPendingUpdates: true,
+      allowedUpdates: ['message', 'callback_query']
+    });
+    
+    console.log('✅ HairBot успешно запущен!');
+    console.log('🔄 Бот работает в режиме polling');
     
     // Graceful shutdown
     process.once('SIGINT', () => {
-      console.log('\n🛑 Остановка бота...');
+      console.log('\n🛑 Получен SIGINT. Остановка бота...');
       bot.stop('SIGINT');
       process.exit(0);
     });
     
     process.once('SIGTERM', () => {
-      console.log('\n🛑 Остановка бота...');
+      console.log('\n🛑 Получен SIGTERM. Остановка бота...');
       bot.stop('SIGTERM');
       process.exit(0);
     });
     
-    return { bot, sequelize };
+    return { bot, app };
     
   } catch (error) {
     console.error('❌ Ошибка запуска бота:', error.message);
@@ -80,4 +110,13 @@ export async function startBot() {
   }
 }
 
-console.log('✅ Функция startBot экспортирована');
+console.log('✅ Модуль src/index.js загружен, функция startBot экспортирована');
+
+// Автозапуск если файл запущен напрямую (для тестирования)
+if (import.meta.url === `file://${process.argv[1]}`) {
+  console.log('🔧 Прямой запуск src/index.js');
+  startBot().catch(error => {
+    console.error('Критическая ошибка:', error);
+    process.exit(1);
+  });
+}
