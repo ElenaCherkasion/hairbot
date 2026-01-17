@@ -1,8 +1,2 @@
-export { 
-  analyzeFaceWithOpenAI, 
-  generateHaircutImage,
-  analyzeColorType,
-  generateTextReport,
-  isOpenAIAvailable,
-  getAIConfigInfo 
-} from './ai-service.js';
+// src/services/index.js
+export { default as aiService } from './ai-service.js';
