@@ -4,83 +4,53 @@
   "description": "Telegram бот для анализа формы лица и подбора стрижек с использованием OpenAI",
   "main": "index.js",
   "type": "module",
+  "private": false,
+
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon src/index.js",
-    "dev:watch": "nodemon --watch src --ext js,json --exec npm run dev",
-    "dev:debug": "NODE_ENV=development nodemon --inspect src/index.js",
-    "dev:with-db": "npm run db:create && npm run db:seed && npm run dev",
+
+    "dev": "nodemon index.js",
+    "dev:watch": "nodemon --watch src --ext js,json --exec node index.js",
+    "dev:debug": "NODE_ENV=development nodemon --inspect index.js",
+
     "test": "jest --passWithNoTests",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "setup": "npm install && npm run db:create && npm run db:seed",
-    "setup:prod": "npm ci --only=production && npm run db:create",
-    "reset": "npm run clean && npm install && npm run setup",
-    "reset:hard": "npm run clean && rm -f package-lock.json && npm install && npm run setup",
+
     "db:create": "node scripts/create-tables.js",
     "db:seed": "node scripts/seed-database.js",
-    "db:backup": "node scripts/backup-db.js",
-    "db:backup:list": "node scripts/backup-db.js --list",
-    "db:backup:restore": "node scripts/backup-db.js --restore",
     "db:migrate": "node scripts/migrate-db.js",
     "db:cleanup": "node scripts/cleanup-db.js",
     "db:stats": "node scripts/show-stats.js --database",
+
     "webhook:setup": "node scripts/setup-webhook.js",
     "webhook:info": "node scripts/setup-webhook.js info",
     "webhook:delete": "node scripts/setup-webhook.js delete",
     "webhook:test": "node scripts/setup-webhook.js test",
+
     "health": "node scripts/check-health.js",
-    "health:detailed": "node scripts/check-health.js --detailed",
+
     "clean": "rm -rf node_modules logs backups",
-    "clean:logs": "rm -f logs/*.log && echo '✅ Логи очищены'",
-    "clean:backups": "rm -f backups/*.sql backups/*.db && echo '✅ Бэкапы очищены'",
-    "clean:modules": "rm -rf node_modules && echo '✅ Node modules удалены'",
-    "clean:cache": "rm -rf .npm && echo '✅ Кэш npm очищен'",
-    "deploy": "npm run check:ci && npm start",
-    "deploy:prod": "NODE_ENV=production npm run deploy",
-    "docker:build": "docker build -t hairbot .",
-    "docker:run": "docker run -p 3000:3000 --env-file .env hairbot",
-    "docker:run:dev": "docker run -p 3000:3000 -v $(pwd):/app --env-file .env hairbot",
-    "docker:compose": "docker-compose up",
-    "docker:compose:build": "docker-compose up --build",
-    "docker:compose:down": "docker-compose down",
-    "docker:compose:logs": "docker-compose logs -f",
-    "docker:compose:restart": "docker-compose restart",
-    "check-env": "node scripts/check-env.js",
-    "check-env:create": "node scripts/check-env.js --create",
-    "check-env:strict": "node scripts/check-env.js --strict",
-    "check-env:ci": "node scripts/check-env-ci.js",
-    "logs": "npm run logs:view",
-    "logs:view": "tail -f logs/*.log 2>/dev/null || echo '⚠️  Файлы логов не найдены'",
-    "logs:error": "tail -f logs/error.log 2>/dev/null || echo '⚠️  Файл error.log не найден'",
-    "logs:app": "tail -f logs/app.log 2>/dev/null || echo '⚠️  Файл app.log не найден'",
-    "logs:clear": "npm run clean:logs",
-    "stats": "node scripts/show-stats.js",
-    "stats:detailed": "node scripts/show-stats.js --detailed",
-    "stats:system": "node scripts/show-stats.js --system",
-    "stats:memory": "node scripts/show-stats.js --memory",
-    "check:all": "npm run check-env && npm run health && npm run stats",
-    "check:quick": "npm run check-env:ci && echo '✅ Базовая проверка пройдена'",
-    "check:ci": "npm run lint && npm test && npm run check-env:ci",
-    "backup:all": "npm run db:backup && cp .env backups/.env.backup 2>/dev/null || echo '⚠️  .env не найден' && echo '✅ Бэкап создан'",
-    "audit": "npm audit",
-    "audit:fix": "npm audit fix",
-    "audit:force": "npm audit fix --force",
-    "prod:setup": "npm ci --only=production && npm run check-env:ci",
+    "clean:logs": "rm -f logs/*.log || true",
+
+    "deploy": "npm start",
     "prod:start": "NODE_ENV=production node index.js",
-    "prod:with-backup": "npm run db:backup && npm run prod:start",
-    "update": "npm update",
-    "update:all": "npx npm-check-updates -u && npm install",
-    "postinstall": "echo '✅ Зависимости установлены'",
+
     "prestart": "echo '🚀 Запуск HairBot...'",
-    "predeploy": "npm run check:ci",
-    "version": "echo 'Версия обновлена'",
-    "postversion": "git push && git push --tags"
+    "postinstall": "echo '✅ Зависимости установлены'"
   },
+
+  "engines": {
+    "node": "22.x",
+    "npm": ">=9.0.0"
+  },
+
   "keywords": [
     "telegram",
     "bot",
@@ -90,25 +60,23 @@
     "openai",
     "face-analysis",
     "haircut",
-    "beauty",
-    "fashion",
-    "cosmetology",
-    "image-analysis"
+    "beauty"
   ],
+
   "author": "Elena Cherkasova <cherkashina720@gmail.com>",
   "license": "MIT",
+
   "repository": {
     "type": "git",
     "url": "https://github.com/ElenaCherkasion/hairbot.git"
   },
+
   "bugs": {
     "url": "https://github.com/ElenaCherkasion/hairbot/issues"
   },
+
   "homepage": "https://github.com/ElenaCherkasion/hairbot#readme",
-  "engines": {
-    "node": ">=18.0.0",
-    "npm": ">=9.0.0"
-  },
+
   "dependencies": {
     "axios": "^1.6.0",
     "compression": "^1.7.4",
@@ -124,16 +92,13 @@
     "telegraf": "^4.15.0",
     "winston": "^3.11.0"
   },
+
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.20",
-    "@types/express-rate-limit": "^5.1.3",
     "@types/helmet": "^4.0.0",
     "@types/jest": "^29.5.8",
     "@types/node": "^20.8.0",
-    "@types/compression": "^1.7.2",
-    "@typescript-eslint/eslint-plugin": "^6.15.0",
-    "@typescript-eslint/parser": "^6.15.0",
     "eslint": "^8.53.0",
     "eslint-config-prettier": "^9.0.0",
     "eslint-plugin-prettier": "^5.0.1",
@@ -141,42 +106,11 @@
     "nodemon": "^3.0.1",
     "prettier": "^3.0.3"
   },
+
   "optionalDependencies": {
     "sqlite3": "^5.1.6"
   },
-  "publishConfig": {
-    "access": "public"
-  },
-  "funding": {
-    "type": "individual",
-    "url": "https://t.me/hairbot_support"
-  },
-  "contributors": [
-    "Elena Cherkasova <cherkashina720@gmail.com>"
-  ],
-  "private": false,
-  "os": [
-    "linux",
-    "darwin",
-    "win32"
-  ],
-  "cpu": [
-    "x64",
-    "arm64"
-  ],
-  "volta": {
-    "node": "18.17.0"
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
-  }
+
+  "os": ["linux", "darwin", "win32"],
+  "cpu": ["x64", "arm64"]
 }
