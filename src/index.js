@@ -1,3 +1,15 @@
+// Добавьте в самое начало файла:
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+console.log('🔍 Отладка путей:');
+console.log('Текущая директория:', __dirname);
+console.log('Пытаюсь найти config.js по пути:', resolve(__dirname, 'config.js'));
+
+// Теперь импорты
 import config from './config.js';
 
 // Импорт основных модулей
