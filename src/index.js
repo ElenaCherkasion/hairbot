@@ -1,5 +1,4 @@
-#!/usr/bin/env node
-// src/index.js
+import config from './config.js';
 
 // Импорт основных модулей
 import { Telegraf, session } from 'telegraf';
