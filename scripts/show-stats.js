@@ -9,118 +9,150 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-console.log('📊 СТАТИСТИКА СИСТЕМЫ И ПРИЛОЖЕНИЯ\n');
+// Загружаем конфигурацию
+import dotenv from 'dotenv';
+dotenv.config();
 
-// 1. Системная информация
-console.log('🔧 СИСТЕМА:');
+console.log('📊 СТАТИСТИКА HAIRBOT\n');
+
+// 1. Информация о системе
+console.log('🔧 СИСТЕМНАЯ ИНФОРМАЦИЯ:');
 console.log(`   Платформа: ${os.platform()} ${os.arch()}`);
-console.log(`   Процессор: ${os.cpus()[0].model}`);
-console.log(`   Ядра CPU: ${os.cpus().length}`);
-console.log(`   Общая память: ${(os.totalmem() / 1024 / 1024 / 1024).toFixed(2)} GB`);
-console.log(`   Свободно памяти: ${(os.freemem() / 1024 / 1024 / 1024).toFixed(2)} GB`);
-console.log(`   Использование памяти: ${((1 - os.freemem() / os.totalmem()) * 100).toFixed(1)}%`);
-console.log(`   Время работы системы: ${(os.uptime() / 3600).toFixed(2)} часов`);
+console.log(`   Процессор: ${os.cpus()[0].model} (${os.cpus().length} ядер)`);
+console.log(`   Память: ${(os.totalmem() / 1024 ** 3).toFixed(1)} GB всего, ${(os.freemem() / 1024 ** 3).toFixed(1)} GB свободно`);
+console.log(`   Загрузка CPU: ${os.loadavg().map(v => v.toFixed(2)).join(', ')} (1, 5, 15 мин)`);
+console.log(`   Uptime системы: ${(os.uptime() / 3600).toFixed(1)} часов`);
 
-// 2. Информация о Node.js
-console.log('\n🟢 NODE.JS:');
-console.log(`   Версия Node: ${process.version}`);
-console.log(`   Версия V8: ${process.versions.v8}`);
-console.log(`   Платформа: ${process.platform}`);
-console.log(`   PID процесса: ${process.pid}`);
-console.log(`   Рабочая директория: ${process.cwd()}`);
-console.log(`   Используемая память: ${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB`);
-console.log(`   Всего выделено: ${(process.memoryUsage().heapTotal / 1024 / 1024).toFixed(2)} MB`);
-console.log(`   RSS: ${(process.memoryUsage().rss / 1024 / 1024).toFixed(2)} MB`);
-
-// 3. Информация о приложении
-console.log('\n🤖 ПРИЛОЖЕНИЕ HAIRBOT:');
+// 2. Информация о приложении
+console.log('\n🤖 ИНФОРМАЦИЯ О ПРИЛОЖЕНИИ:');
 try {
-  const packageJson = JSON.parse(
-    fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')
-  );
-  console.log(`   Версия: ${packageJson.version}`);
+  const packagePath = path.join(__dirname, '..', 'package.json');
+  const packageData = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+  
+  console.log(`   Версия: ${packageData.version}`);
   console.log(`   Режим: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`   Node.js: ${process.version}`);
+  console.log(`   Используемая память: ${(process.memoryUsage().heapUsed / 1024 ** 2).toFixed(2)} MB`);
+  console.log(`   PID: ${process.pid}`);
   
+  // Информация о боте
   if (process.env.TELEGRAM_BOT_TOKEN) {
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    const botId = token.split(':')[0];
+    const botId = process.env.TELEGRAM_BOT_TOKEN.split(':')[0];
     console.log(`   Bot ID: ${botId}`);
-  }
-  
-  if (process.env.OPENAI_API_KEY) {
-    const key = process.env.OPENAI_API_KEY;
-    console.log(`   OpenAI: настроен (${key.substring(0, 10)}...)`);
   }
 } catch (error) {
   console.log(`   Ошибка чтения package.json: ${error.message}`);
 }
 
-// 4. Проверка зависимостей
-console.log('\n📦 ЗАВИСИМОСТИ:');
-try {
-  const nodeModulesPath = path.join(__dirname, '..', 'node_modules');
-  const hasNodeModules = fs.existsSync(nodeModulesPath);
-  
-  if (hasNodeModules) {
-    const deps = ['express', 'openai', 'mysql2', 'winston'];
-    deps.forEach(dep => {
-      const depPath = path.join(nodeModulesPath, dep);
-      console.log(`   ${dep}: ${fs.existsSync(depPath) ? '✅ установлен' : '❌ отсутствует'}`);
-    });
-  } else {
-    console.log('   ❌ node_modules не найдены. Запустите: npm install');
-  }
-} catch (error) {
-  console.log(`   Ошибка проверки зависимостей: ${error.message}`);
-}
-
-// 5. Проверка важных файлов и директорий
-console.log('\n📁 ФАЙЛОВАЯ СИСТЕМА:');
-const importantPaths = [
-  { name: 'Исходный код', path: 'src/', optional: false },
-  { name: 'Файл окружения', path: '.env', optional: false },
-  { name: 'Логи', path: 'logs/', optional: true },
-  { name: 'Резервные копии', path: 'backups/', optional: true },
-  { name: 'Конфигурация Docker', path: 'docker-compose.yml', optional: true }
+// 3. Проверка зависимостей
+console.log('\n📦 ПРОВЕРКА ЗАВИСИМОСТЕЙ:');
+const dependencies = [
+  'express',
+  'openai',
+  'mysql2',
+  'winston',
+  'helmet',
+  'compression',
+  'express-rate-limit'
 ];
 
-importantPaths.forEach(item => {
+const nodeModulesPath = path.join(__dirname, '..', 'node_modules');
+dependencies.forEach(dep => {
+  const depPath = path.join(nodeModulesPath, dep);
+  const exists = fs.existsSync(depPath);
+  console.log(`   ${exists ? '✅' : '❌'} ${dep}`);
+});
+
+// 4. Проверка файлов и директорий
+console.log('\n📁 ФАЙЛЫ И ДИРЕКТОРИИ:');
+const checkPaths = [
+  { name: 'Исходный код', path: 'src/', required: true },
+  { name: 'Модели БД', path: 'src/database/models/', required: true },
+  { name: 'Обработчики', path: 'src/handlers/', required: true },
+  { name: 'Сервисы', path: 'src/services/', required: true },
+  { name: 'Утилиты', path: 'src/utils/', required: true },
+  { name: 'Логи', path: 'logs/', required: false },
+  { name: 'База данных', path: 'database/', required: false },
+  { name: 'Конфигурация', path: 'config.js', required: true }
+];
+
+checkPaths.forEach(item => {
   const fullPath = path.join(__dirname, '..', item.path);
   const exists = fs.existsSync(fullPath);
-  const status = exists ? '✅ найден' : (item.optional ? '⚠️  опциональный' : '❌ отсутствует');
-  console.log(`   ${item.name}: ${status}`);
+  const status = exists ? '✅' : (item.required ? '❌' : '⚠️ ');
+  console.log(`   ${status} ${item.name}`);
 });
 
-// 6. Сетевые интерфейсы
-console.log('\n🌐 СЕТЬ:');
-const interfaces = os.networkInterfaces();
-Object.keys(interfaces).forEach(iface => {
-  interfaces[iface].forEach(address => {
-    if (address.family === 'IPv4' && !address.internal) {
-      console.log(`   ${iface}: ${address.address}`);
+// 5. Статистика базы данных (если доступна)
+console.log('\n🗄️ СТАТИСТИКА БАЗЫ ДАННЫХ:');
+try {
+  const { sequelize } = await import('../src/database/connection.js');
+  const { User, Analysis, Payment } = await import('../src/database/models/index.js');
+  
+  if (sequelize) {
+    const userCount = await User.count();
+    const analysisCount = await Analysis.count();
+    const paymentCount = await Payment.count();
+    
+    console.log(`   👤 Пользователей: ${userCount}`);
+    console.log(`   📊 Анализов: ${analysisCount}`);
+    console.log(`   💳 Платежей: ${paymentCount}`);
+    
+    // Последние активности
+    const lastUser = await User.findOne({ order: [['createdAt', 'DESC']] });
+    if (lastUser) {
+      const timeDiff = Date.now() - new Date(lastUser.createdAt).getTime();
+      console.log(`   ⏰ Последний пользователь: ${Math.floor(timeDiff / (1000 * 60 * 60))} часов назад`);
     }
-  });
-});
+  }
+} catch (error) {
+  console.log(`   ℹ️  База данных не доступна: ${error.message}`);
+}
 
-console.log('\n🎯 РЕКОМЕНДАЦИИ:');
+// 6. Проверка API ключей
+console.log('\n🔐 ПРОВЕРКА API:');
+if (process.env.OPENAI_API_KEY) {
+  const key = process.env.OPENAI_API_KEY;
+  console.log(`   ✅ OpenAI API: настроен (${key.substring(0, 7)}...)`);
+} else {
+  console.log(`   ❌ OpenAI API: не настроен`);
+}
+
+if (process.env.TELEGRAM_BOT_TOKEN) {
+  console.log(`   ✅ Telegram Bot: настроен`);
+} else {
+  console.log(`   ❌ Telegram Bot: не настроен`);
+}
+
+// 7. Рекомендации
+console.log('\n💡 РЕКОМЕНДАЦИИ:');
 const recommendations = [];
 
-if (os.freemem() / os.totalmem() < 0.1) {
-  recommendations.push('🔴 Мало свободной памяти! Рассмотрите увеличение RAM');
+// Проверка памяти
+const memoryUsage = process.memoryUsage();
+const heapUsedPercent = (memoryUsage.heapUsed / memoryUsage.heapTotal) * 100;
+if (heapUsedPercent > 80) {
+  recommendations.push('Высокое использование памяти - рассмотрите оптимизацию');
 }
 
-if (os.loadavg()[0] > os.cpus().length * 0.7) {
-  recommendations.push('🟡 Высокая загрузка CPU');
+// Проверка NODE_ENV
+if (process.env.NODE_ENV === 'production' && !process.env.WEBHOOK_URL) {
+  recommendations.push('В production рекомендуется использовать webhook вместо polling');
 }
 
-if (!process.env.NODE_ENV || process.env.NODE_ENV === 'development') {
-  recommendations.push('🟢 Режим разработки активирован');
+// Проверка логов
+const logsDir = path.join(__dirname, '..', 'logs');
+if (fs.existsSync(logsDir)) {
+  const logs = fs.readdirSync(logsDir);
+  if (logs.length === 0) {
+    recommendations.push('Директория logs пуста - логи не ведутся');
+  }
 }
 
 if (recommendations.length > 0) {
-  recommendations.forEach(rec => console.log(`   ${rec}`));
+  recommendations.forEach(rec => console.log(`   ⚠️  ${rec}`));
 } else {
   console.log('   ✅ Все системы работают нормально');
 }
 
-console.log('\n📈 Готов к работе!');
+console.log('\n🎯 СТАТУС: ГОТОВ К РАБОТЕ!');
