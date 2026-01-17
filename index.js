@@ -1,98 +1,84 @@
 #!/usr/bin/env node
-// index.js (КОРНЕВОЙ ФАЙЛ - ТОЛЬКО ЗАПУСК)
+// index.js - КОРНЕВОЙ ЗАПУСКАТЕЛЬ HAIRBOT
 
 import { fileURLToPath } from 'url';
-import { dirname, join, resolve } from 'path';
+import { dirname, join } from 'path';
 import fs from 'fs';
-import { spawn } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 console.log('🚀 =================================');
-console.log('🚀 HAIRBOT - TELEGRAM БОТ ДЛЯ ПОДБОРА СТРИЖЕК');
+console.log('🚀 ЗАПУСК HAIRBOT');
 console.log('🚀 =================================\n');
 
-// Отладочная информация
-console.log('📊 Информация о запуске:');
-console.log('   Время:', new Date().toLocaleString());
+// 1. БАЗОВАЯ ИНФОРМАЦИЯ О ЗАПУСКЕ
+console.log('📊 Информация о системе:');
+console.log('   Время запуска:', new Date().toLocaleString());
 console.log('   Node.js:', process.version);
 console.log('   Платформа:', process.platform, process.arch);
-console.log('   Память:', Math.round(process.memoryUsage().rss / 1024 / 1024), 'MB');
 console.log('   NODE_ENV:', process.env.NODE_ENV || 'production');
 console.log('   PORT:', process.env.PORT || 3000);
 console.log('   Рабочая директория:', __dirname);
 
-// Проверка структуры проекта
+// 2. ПРОВЕРКА КРИТИЧЕСКИ ВАЖНЫХ ФАЙЛОВ
 console.log('\n🔍 Проверка структуры проекта:');
-const checkPaths = [
-  { path: 'src/', name: 'Папка с исходным кодом', type: 'dir' },
-  { path: 'src/index.js', name: 'Основное приложение', type: 'file' },
-  { path: 'src/config.js', name: 'Конфигурация', type: 'file' },
-  { path: 'src/database/', name: 'Модели базы данных', type: 'dir' },
-  { path: 'package.json', name: 'Конфигурация проекта', type: 'file' },
+const criticalFiles = [
+  { path: 'src/index.js', name: 'Основное приложение' },
+  { path: 'src/database/connection.js', name: 'Подключение к БД' },
+  { path: 'src/utils/logger.js', name: 'Система логирования' },
+  { path: 'src/handlers/', name: 'Обработчики команд', type: 'dir' },
+  { path: 'package.json', name: 'Конфигурация проекта' }
 ];
 
-let allExists = true;
-checkPaths.forEach(item => {
+let hasErrors = false;
+criticalFiles.forEach(item => {
   const fullPath = join(__dirname, item.path);
   const exists = fs.existsSync(fullPath);
-  const isCorrectType = exists && 
-    ((item.type === 'dir' && fs.statSync(fullPath).isDirectory()) ||
-     (item.type === 'file' && fs.statSync(fullPath).isFile()));
   
-  const status = exists && isCorrectType ? '✅' : '❌';
-  console.log(`   ${status} ${item.name}`);
-  
-  if (!exists || !isCorrectType) {
-    allExists = false;
-    if (!exists) {
-      console.log(`      Файл/папка не существует: ${item.path}`);
-    } else if (!isCorrectType) {
-      console.log(`      Неверный тип: ожидается ${item.type}`);
-    }
+  if (item.type === 'dir') {
+    const isDir = exists && fs.statSync(fullPath).isDirectory();
+    console.log(`   ${isDir ? '✅' : '❌'} ${item.name}`);
+    if (!isDir) hasErrors = true;
+  } else {
+    console.log(`   ${exists ? '✅' : '❌'} ${item.name}`);
+    if (!exists) hasErrors = true;
   }
 });
 
-if (!allExists) {
-  console.error('\n❌ Критическая ошибка: некорректная структура проекта');
-  console.error('   Проверьте наличие всех необходимых файлов и папок');
+if (hasErrors) {
+  console.error('\n❌ Критические файлы отсутствуют!');
+  console.error('   Проверьте структуру проекта');
   process.exit(1);
 }
 
-// Проверка переменных окружения
+// 3. ПРОВЕРКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ
 console.log('\n🔐 Проверка переменных окружения:');
-const requiredVars = [
-  { name: 'TELEGRAM_BOT_TOKEN', aliases: ['TELEGRAM_TOKEN'] },
-  { name: 'OPENAI_API_KEY', aliases: [] }
-];
 
-let allVarsOk = true;
-requiredVars.forEach(variable => {
-  const allNames = [variable.name, ...variable.aliases];
-  const found = allNames.find(name => process.env[name]);
+const telegramToken = process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+const openaiKey = process.env.OPENAI_API_KEY;
+
+console.log(`   ${telegramToken ? '✅' : '❌'} Telegram Token: ${telegramToken ? 'установлен' : 'ОТСУТСТВУЕТ'}`);
+console.log(`   ${openaiKey ? '✅' : '❌'} OpenAI API Key: ${openaiKey ? 'установлен' : 'ОТСУТСТВУЕТ'}`);
+
+if (!telegramToken || !openaiKey) {
+  console.error('\n⚠️  Внимание: отсутствуют обязательные переменные!');
+  console.error('   Бот не сможет работать без:');
+  if (!telegramToken) console.error('   - TELEGRAM_TOKEN или TELEGRAM_BOT_TOKEN');
+  if (!openaiKey) console.error('   - OPENAI_API_KEY');
+  console.error('\n💡 Добавьте их в Render Dashboard → Environment');
   
-  if (found) {
-    const value = process.env[found];
-    const maskedValue = found.includes('TOKEN') || found.includes('KEY') 
-      ? '••••••••' + value.substring(value.length - 4)
-      : value;
-    console.log(`   ✅ ${variable.name}: установлена (как ${found}=${maskedValue})`);
+  // В production выходим с ошибкой, в development продолжаем
+  if (process.env.NODE_ENV === 'production') {
+    process.exit(1);
   } else {
-    console.log(`   ❌ ${variable.name}: не установлена`);
-    allVarsOk = false;
+    console.log('   ⚠️  Продолжаем в режиме development...');
   }
-});
-
-if (!allVarsOk) {
-  console.error('\n⚠️  Внимание: отсутствуют некоторые переменные окружения');
-  console.error('   Бот может работать некорректно');
-  console.error('   Проверьте настройки в Render Dashboard → Environment');
 }
 
-// Создаем необходимые директории
+// 4. СОЗДАНИЕ НЕОБХОДИМЫХ ДИРЕКТОРИЙ
 console.log('\n📁 Подготовка директорий:');
-const requiredDirs = ['logs', 'backups', 'database'];
+const requiredDirs = ['logs', 'database', 'backups'];
 requiredDirs.forEach(dir => {
   const dirPath = join(__dirname, dir);
   if (!fs.existsSync(dirPath)) {
@@ -107,24 +93,30 @@ requiredDirs.forEach(dir => {
   }
 });
 
-// Переходим в папку src для правильных относительных путей
-const srcDir = join(__dirname, 'src');
-console.log(`\n🔄 Переход в рабочую директорию: ${srcDir}`);
-
+// 5. ПЕРЕХОД В ПАПКУ SRC ДЛЯ ПРАВИЛЬНЫХ ПУТЕЙ
+console.log('\n🔄 Переход в рабочую директорию...');
 try {
+  const srcDir = join(__dirname, 'src');
+  
+  if (!fs.existsSync(srcDir)) {
+    throw new Error(`Папка src не найдена: ${srcDir}`);
+  }
+  
   process.chdir(srcDir);
   console.log('✅ Успешно перешли в папку src');
+  console.log('   Текущая директория:', process.cwd());
+  
 } catch (error) {
   console.error(`❌ Ошибка перехода в папку src: ${error.message}`);
   process.exit(1);
 }
 
-// Запускаем основное приложение
+// 6. ЗАПУСК ОСНОВНОГО ПРИЛОЖЕНИЯ
 console.log('\n🎯 ЗАПУСК ОСНОВНОГО ПРИЛОЖЕНИЯ');
 console.log('========================================\n');
 
 try {
-  // Динамический импорт основного приложения
+  // Импортируем основной модуль
   const appModule = await import('./index.js');
   
   // Проверяем экспорты
@@ -135,64 +127,60 @@ try {
     console.log('✅ Найдена default функция, запускаем...');
     await appModule.default();
   } else {
-    console.log('ℹ️  Функция запуска не экспортирована, пытаемся запустить модуль...');
-    // Модуль может запускаться самостоятельно при импорте
+    console.error('❌ В src/index.js не экспортирована функция запуска!');
+    console.error('   Добавьте в конец файла: export async function startBot() { ... }');
+    process.exit(1);
   }
   
+  // УСПЕШНЫЙ ЗАПУСК
   console.log('\n========================================');
-  console.log('✅ Приложение успешно запущено!');
-  console.log('🤖 Бот должен быть активен');
+  console.log('✅ HAIRBOT УСПЕШНО ЗАПУЩЕН!');
+  console.log('🤖 Бот готов к работе');
+  console.log('========================================\n');
   
-  // Информация для пользователя
-  const botToken = process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_TOKEN;
-  if (botToken) {
-    const botId = botToken.split(':')[0];
+  // Информация для админа
+  if (telegramToken) {
+    const botId = telegramToken.split(':')[0];
     console.log(`   Bot ID: ${botId}`);
   }
   
+  console.log(`   Режим: ${process.env.NODE_ENV || 'production'}`);
+  console.log(`   Health check: http://localhost:${process.env.PORT || 3000}/health`);
+  
   if (process.env.WEBHOOK_URL) {
-    console.log(`🌐 Webhook: ${process.env.WEBHOOK_URL}`);
+    console.log(`   Webhook: ${process.env.WEBHOOK_URL}`);
   } else {
-    console.log('🔄 Режим: Polling');
+    console.log('   Режим подключения: Polling');
   }
   
-  console.log(`📊 Health check: http://localhost:${process.env.PORT || 3000}/health`);
-  console.log('========================================\n');
-  
 } catch (error) {
+  // ОБРАБОТКА ОШИБОК ЗАПУСКА
   console.error('\n❌ ОШИБКА ЗАПУСКА ПРИЛОЖЕНИЯ:');
   console.error('   Сообщение:', error.message);
   
-  // Детальный анализ ошибки
+  // Детальный анализ для распространенных ошибок
   if (error.code === 'ERR_MODULE_NOT_FOUND') {
-    console.error('   Тип: MODULE_NOT_FOUND (файл не найден)');
+    console.error('   Тип: MODULE_NOT_FOUND (модуль не найден)');
     
-    // Извлекаем путь из сообщения об ошибке
+    // Пытаемся найти какой модуль отсутствует
     const match = error.message.match(/Cannot find module '([^']+)'/);
     if (match) {
       const missingModule = match[1];
       console.error(`   Отсутствующий модуль: ${missingModule}`);
       
-      // Пробуем найти модуль
-      if (missingModule.startsWith('./') || missingModule.startsWith('../')) {
-        const modulePath = resolve(process.cwd(), missingModule);
-        console.error(`   Искомый путь: ${modulePath}`);
-        console.error(`   Существует: ${fs.existsSync(modulePath) ? 'Да' : 'Нет'}`);
-        
-        // Показываем содержимое текущей директории
-        console.error('\n📁 Содержимое текущей директории:');
-        try {
-          const files = fs.readdirSync(process.cwd());
-          files.forEach(file => {
-            const fullPath = join(process.cwd(), file);
-            const stat = fs.statSync(fullPath);
-            console.error(`   ${stat.isDirectory() ? '📁' : '📄'} ${file}`);
-          });
-        } catch (readError) {
-          console.error('   Не удалось прочитать директорию');
-        }
+      // Подсказки для распространенных проблем
+      if (missingModule.includes('config.js')) {
+        console.error('   💡 Решение: Создайте файл src/config.js или удалите его импорт из src/index.js');
+      } else if (missingModule.includes('telegraf')) {
+        console.error('   💡 Решение: Установите зависимость: npm install telegraf');
+      } else if (missingModule.includes('openai')) {
+        console.error('   💡 Решение: Установите зависимость: npm install openai');
       }
     }
+  } else if (error.message.includes('sequelize')) {
+    console.error('   💡 Проблема с базой данных. Проверьте DATABASE_URL');
+  } else if (error.message.includes('token')) {
+    console.error('   💡 Проблема с токеном бота. Проверьте TELEGRAM_TOKEN');
   }
   
   console.error('\n🔧 Stack trace для отладки:');
@@ -201,14 +189,14 @@ try {
   process.exit(1);
 }
 
-// Обработка сигналов для graceful shutdown
+// 7. GRACEFUL SHUTDOWN - КОРРЕКТНОЕ ЗАВЕРШЕНИЕ
 process.on('SIGINT', () => {
-  console.log('\n\n🛑 Получен SIGINT. Завершение работы...');
+  console.log('\n\n🛑 Получен SIGINT. Корректное завершение работы...');
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
-  console.log('\n\n🛑 Получен SIGTERM. Завершение работы...');
+  console.log('\n\n🛑 Получен SIGTERM. Корректное завершение работы...');
   process.exit(0);
 });
 
