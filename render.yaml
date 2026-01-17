@@ -1,10 +1,129 @@
+# Render Blueprint для HAIRbot
+# Документация: https://render.com/docs/blueprint-spec
+
 services:
+  # Основной веб-сервис (бэкенд бота)
   - type: web
-    name: hairstyle-bot
+    name: hairbot
     env: node
-    buildCommand: npm install
+    plan: free
+    region: frankfurt  # Или: oregon, ohio, singapore, mumbai, sydney
+    branch: main
+    
+    # Команды сборки и запуска
+    buildCommand: |
+      npm install
+      npm run db:create 2>/dev/null || echo "Database setup skipped"
+    
     startCommand: npm start
+    
+    # Health check
+    healthCheckPath: /health
     autoDeploy: true
+    
+    # Переменные окружения
     envVars:
+      # Основные настройки
       - key: NODE_ENV
         value: production
+      - key: PORT
+        value: 3000
+      - key: LOG_LEVEL
+        value: INFO
+      - key: REQUEST_TIMEOUT
+        value: 30000
+      - key: SUPPORT_EMAIL
+        value: cherkashina720@gmail.com
+      - key: TEST_PAYMENT_MODE
+        value: "true"
+      - key: DEBUG_MODE
+        value: "false"
+      
+      # Лимиты
+      - key: MAX_PHOTO_SIZE
+        value: "5"
+      - key: MAX_FREE_ANALYSES
+        value: "1"
+      - key: PHOTO_UPLOAD_TIMEOUT
+        value: "10"
+      - key: STATE_CLEANUP_HOURS
+        value: "24"
+      
+      # Для PostgreSQL (Render предоставляет бесплатно)
+      - key: DATABASE_URL
+        fromDatabase:
+          name: hairbot-db
+          property: connectionString
+      
+      # Или для внешней MySQL (раскомментируйте если нужно):
+      # - key: DB_HOST
+      #   sync: false
+      # - key: DB_PORT
+      #   value: "3306"
+      # - key: DB_NAME
+      #   sync: false
+      # - key: DB_USER
+      #   sync: false
+      # - key: DB_PASSWORD
+      #   sync: false
+      # - key: DATABASE_SSL
+      #   value: "true"
+      
+      # Токены (установить вручную в Dashboard Render)
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: PRIVACY_POLICY_URL
+        value: https://hairstyle-bot.onrender.com/privacy
+    
+    # Диск для логов и бэкапов
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    
+    # Масштабирование
+    # numInstances: 1  # Для free плана всегда 1
+    
+    # Дополнительные настройки
+    # headers:
+    #   - path: /*
+    #     name: X-Frame-Options
+    #     value: DENY
+    #   - path: /*
+    #     name: X-Content-Type-Options
+    #     value: nosniff
+    
+  # База данных PostgreSQL (бесплатно на Render)
+  - type: pgsql
+    name: hairbot-db
+    plan: free
+    region: frankfurt
+    databaseName: hairbot
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: everywhere
+
+# Cron jobs (планировщик задач)
+jobs:
+  # Ежедневный бэкап БД в 3:00 UTC
+  - type: cron
+    name: daily-backup
+    schedule: "0 3 * * *"
+    startCommand: node scripts/backup-db.js
+  
+  # Проверка здоровья каждые 30 минут
+  - type: cron
+    name: health-check
+    schedule: "*/30 * * * *"
+    startCommand: node scripts/check-health.js
+  
+  # Очистка старых данных раз в неделю
+  - type: cron
+    name: cleanup
+    schedule: "0 4 * * 0"
+    startCommand: node scripts/cleanup-old-data.js || echo "Cleanup script not found"
+
+# Деплой только при пуше в main или вручную
+# deployHook: ваш-хук-для-деплоя
