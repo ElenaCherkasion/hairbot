@@ -1,1 +1,1 @@
-import { отправитьСообщение } from '../../../utils/telegram-api.js';
+import { отправитьСообщение } from '../utils/telegram-api.js';
