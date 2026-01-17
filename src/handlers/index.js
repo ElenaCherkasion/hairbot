@@ -4,11 +4,11 @@ import logger from '../utils/logger.js';
 export function setupWebhook(bot, url) {
   return bot.telegram.setWebhook(url)
     .then(() => {
-      logger.info(`Webhook установлен на ${url}`);
+      logger.info(`✅ Webhook установлен на ${url}`);
       return true;
     })
     .catch(error => {
-      logger.error(`Ошибка установки webhook: ${error.message}`);
+      logger.error(`❌ Ошибка установки webhook: ${error.message}`);
       throw error;
     });
 }
