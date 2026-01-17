@@ -11,6 +11,9 @@ export async function startBot() {
 
   const PORT = Number(process.env.PORT || 3000);
   const NODE_ENV = process.env.NODE_ENV || "development";
+  console.log("🔎 DEBUG ENV CHECK");
+console.log("PUBLIC_URL in env:", "PUBLIC_URL" in process.env);
+console.log("PUBLIC_URL value:", process.env.PUBLIC_URL);
 
   // Поддержим оба варианта имени токена
   const TELEGRAM_TOKEN =
