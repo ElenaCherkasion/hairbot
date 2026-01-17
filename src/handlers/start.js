@@ -1,23 +1,21 @@
-import { отправитьСообщение } from '../utils/telegram-api.js';
-import { getMainKeyboard } from '../keyboards/main.js';
-import { getWelcomeText } from '../utils/text-templates.js';
+// src/handlers/start.js
+import textTemplates from '../utils/text-templates.js';
 
-export async function handleStart(userId, chatId) {
-  try {
-    const welcomeText = getWelcomeText();
-    const keyboard = getMainKeyboard();
+export default function startHandler(bot) {
+  bot.start(async (ctx) => {
+    const userId = ctx.from.id;
+    const username = ctx.from.username;
+    const firstName = ctx.from.first_name;
     
-    const результат = await отправитьСообщение(chatId, welcomeText, keyboard);
+    console.log(`👤 Новый пользователь: @${username} (${userId})`);
     
-    if (!результат.ok) {
-      console.error('❌ Ошибка отправки приветствия:', результат.описание);
-      // Пробуем отправить без HTML
-      await отправитьСообщение(chatId, 
-        '👋 Добро пожаловать в HAIRbot! Используйте кнопки меню для навигации.',
-        keyboard
-      );
-    }
-  } catch (error) {
-    console.error('❌ Критическая ошибка в handleStart:', error);
-  }
+    await ctx.reply(
+      textTemplates.welcome(firstName),
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.help((ctx) => {
+    ctx.reply(textTemplates.help, { parse_mode: 'Markdown' });
+  });
 }
