@@ -14,7 +14,10 @@ export default function callbackHandler(bot) {
     if (st.step === "wait_error_text") {
       setState(userId, { step: "idle" });
       // TODO: сохранить в БД error_reports
-      await ctx.reply("✅ Спасибо! Сообщение об ошибке принято. Мы рассмотрим обращение.", backToMenuKeyboard());
+      await ctx.reply(
+        "✅ Спасибо! Сообщение об ошибке принято. Мы рассмотрим обращение.",
+        backToMenuKeyboard()
+      );
     }
   });
 
@@ -51,14 +54,22 @@ export default function callbackHandler(bot) {
     }
 
     if (data === "MENU_PAYMENTS") {
-      // ВАЖНО: без Markdown + разбиение на части
-      await replyLong(ctx, textTemplates.docs.payments, backToMenuKeyboard());
+      try {
+        await replyLong(ctx, textTemplates.docs.payments, backToMenuKeyboard());
+      } catch (err) {
+        console.error("❌ MENU_PAYMENTS error:", err?.response?.description || err?.message || err);
+        await ctx.reply("Не удалось показать правила оплаты (техническая ошибка).", backToMenuKeyboard());
+      }
       return;
     }
 
     if (data === "MENU_PRIVACY") {
-      // ✅ FIX: больше не зависает
-      await replyLong(ctx, textTemplates.docs.privacy, backToMenuKeyboard());
+      try {
+        await replyLong(ctx, textTemplates.docs.privacy, backToMenuKeyboard());
+      } catch (err) {
+        console.error("❌ MENU_PRIVACY error:", err?.response?.description || err?.message || err);
+        await ctx.reply("Не удалось показать политику (техническая ошибка).", backToMenuKeyboard());
+      }
       return;
     }
 
@@ -101,17 +112,31 @@ export default function callbackHandler(bot) {
 
     if (data === "DELETE_CONFIRM") {
       resetUserData(userId);
-      await ctx.reply("✅ Ваши персональные данные удалены. Для повторного использования потребуется новое согласие.", mainMenuKeyboard());
+      await ctx.reply(
+        "✅ Ваши персональные данные удалены. Для повторного использования потребуется новое согласие.",
+        mainMenuKeyboard()
+      );
       return;
     }
 
     // DOCS
     if (data === "DOC_CONSENT_PD") {
-      await replyLong(ctx, textTemplates.docs.consentPd, backToMenuKeyboard());
+      try {
+        await replyLong(ctx, textTemplates.docs.consentPd, backToMenuKeyboard());
+      } catch (err) {
+        console.error("❌ DOC_CONSENT_PD error:", err?.response?.description || err?.message || err);
+        await ctx.reply("Не удалось показать документ (техническая ошибка).", backToMenuKeyboard());
+      }
       return;
     }
+
     if (data === "DOC_CONSENT_THIRD") {
-      await replyLong(ctx, textTemplates.docs.consentThird, backToMenuKeyboard());
+      try {
+        await replyLong(ctx, textTemplates.docs.consentThird, backToMenuKeyboard());
+      } catch (err) {
+        console.error("❌ DOC_CONSENT_THIRD error:", err?.response?.description || err?.message || err);
+        await ctx.reply("Не удалось показать документ (техническая ошибка).", backToMenuKeyboard());
+      }
       return;
     }
 
@@ -134,7 +159,10 @@ export default function callbackHandler(bot) {
     if (data === "CONSENT_ACCEPT_ALL") {
       const st = getState(userId);
       if (!st.paid) {
-        await ctx.reply("⚠️ Согласие запрашивается после оплаты. Сначала оплатите тариф. (Тест: /pay_ok)", backToMenuKeyboard());
+        await ctx.reply(
+          "⚠️ Согласие запрашивается после оплаты. Сначала оплатите тариф. (Тест: /pay_ok)",
+          backToMenuKeyboard()
+        );
         return;
       }
       acceptAllConsents(userId);
@@ -147,7 +175,6 @@ export default function callbackHandler(bot) {
       const plan = data.replace("TARIFF_", "");
       if (!["free", "pro", "premium"].includes(plan)) return;
 
-      // строго: при смене тарифа сбрасываем оплату/согласия
       setState(userId, {
         plan,
         paid: false,
