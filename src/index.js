@@ -1,3 +1,5 @@
+// ✅ FILE: src/index.js  (или файл, где у тебя export async function startBot())
+
 import express from "express";
 import helmet from "helmet";
 import compression from "compression";
@@ -69,7 +71,7 @@ const CONSENT_PD_TEXT = `Согласие на обработку персона
 
 const PRIVACY_TEXT = `Политика конфиденциальности
 
-Оператор — самозанятая Черкашина Елене Игоревне, ИНН 250808906795, обеспечивает защиту персональных данных пользователей в соответствии с законодательством Российской Федерации.
+Оператор — самозанятая Черкашина Елена Игоревна, ИНН 250808906795, обеспечивает защиту персональных данных пользователей в соответствии с законодательством Российской Федерации.
 
 Какие данные обрабатываются:
 - имя или псевдоним пользователя;
@@ -90,7 +92,7 @@ const PRIVACY_TEXT = `Политика конфиденциальности
 персональные данные могут передаваться третьим лицам только при наличии согласия пользователя либо в случаях, предусмотренных законодательством РФ.
 
 По вопросам, связанным с обработкой персональных данных:
-📧 ${SUPPORT_EMAIL}
+${SUPPORT_EMAIL}
 
 Версия: ${DOC_VERSIONS.privacy}
 `;
@@ -129,7 +131,7 @@ const PAYMENTS_AND_REFUNDS_TEXT = `Правила оплаты и возврат
 - ошибка вызвана действиями пользователя (неподходящее фото, отказ от согласий и т.п.).
 
 Порядок обращения:
-1) Нажмите «⚠️ Сообщить об ошибке» в главном меню и опишите проблему.
+1) Нажмите «Сообщить об ошибке» в главном меню и опишите проблему.
 2) Мы рассмотрим обращение и при подтверждении технической неисправности примем решение о возврате.
 
 Сроки:
@@ -154,18 +156,18 @@ function requirementsText() {
   );
 }
 
-const TARIFFS_TEXT = `📌 *Тарифы и что входит*
+const TARIFFS_TEXT = `📌 Тарифы и что входит
 
-*FREE*  
-• Базовый разбор (демо)  
+FREE
+• Базовый разбор (демо)
 • Без обработки фото после оплаты/согласий
 
-*PRO*  
-• Расширенный разбор  
+PRO
+• Расширенный разбор
 • Доступ к анализу по фото
 
-*PREMIUM*  
-• Максимально подробный разбор  
+PREMIUM
+• Максимально подробный разбор
 • Доступ к анализу по фото
 
 Нажмите кнопку ниже, чтобы выбрать тариф.`;
@@ -176,8 +178,36 @@ const CONSENT_SCREEN_TEXT = `Для продолжения мне нужно в�
 
 Нажимая «Принять и продолжить», вы принимаете оба согласия.`;
 
+// ===================== FIX: LONG MESSAGES (prevents "hang") =====================
+function splitIntoChunks(text, maxLen = 3500) {
+  const chunks = [];
+  let i = 0;
+
+  while (i < text.length) {
+    let end = Math.min(i + maxLen, text.length);
+
+    // Prefer splitting by newline for readability
+    const nl = text.lastIndexOf("\n", end);
+    if (nl > i + 500) end = nl;
+
+    chunks.push(text.slice(i, end));
+    i = end;
+  }
+
+  return chunks;
+}
+
+// Sends long text in multiple messages.
+// Important: pass keyboard only in the last message.
+async function replyLong(ctx, text, lastMessageExtra = {}) {
+  const chunks = splitIntoChunks(text);
+  for (let idx = 0; idx < chunks.length; idx++) {
+    const extra = idx === chunks.length - 1 ? lastMessageExtra : {};
+    await ctx.reply(chunks[idx], extra);
+  }
+}
+
 // ===================== STATE (MVP in-memory) =====================
-// Для продакшена лучше перенести в БД.
 const userState = new Map(); // userId -> state
 
 function defaultState() {
@@ -206,7 +236,6 @@ function setState(userId, patch) {
   userState.set(userId, { ...getState(userId), ...patch });
 }
 function resetUserData(userId) {
-  // логически "удаление данных"
   userState.set(userId, defaultState());
   setState(userId, { deleted: true });
 }
@@ -357,7 +386,6 @@ async function analyzeWithOpenAI({ imageDataUrl, plan }) {
 
   const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-  // PRO/PREMIUM тут одинаково по логике, но ты можешь расширить промпт/кол-во вариантов
   const variantsCount = plan === "premium" ? 4 : 2;
 
   const prompt =
@@ -390,7 +418,12 @@ async function analyzeWithOpenAI({ imageDataUrl, plan }) {
 
 // ===================== GUARDS =====================
 function canAcceptPhoto(st) {
-  return st.paid === true && st.consentPd === true && st.consentThird === true && st.deleted !== true;
+  return (
+    st.paid === true &&
+    st.consentPd === true &&
+    st.consentThird === true &&
+    st.deleted !== true
+  );
 }
 
 // ===================== START BOT =====================
@@ -429,24 +462,21 @@ export async function startBot() {
   // ===================== Telegraf =====================
   const bot = new Telegraf(TELEGRAM_TOKEN);
 
-  // -------- /start -> главное меню --------
   bot.start(async (ctx) => {
     const userId = ctx.from?.id;
     if (!userId) return;
 
-    // создаём стейт если пустой
-    getState(userId); // ensures defaults
-    await ctx.reply(
-      "Привет! Я HairBot ✂️\n\nВыберите действие в меню ниже:",
-      mainMenuKeyboard()
-    );
+    // Ensure state exists
+    getState(userId);
+
+    await ctx.reply("Привет! Я HairBot ✂️\n\nВыберите действие в меню ниже:", mainMenuKeyboard());
   });
 
   bot.command("menu", async (ctx) => {
     await ctx.reply("Главное меню:", mainMenuKeyboard());
   });
 
-  // -------- ТЕСТ: отметить оплату (потом заменишь на реальную оплату) --------
+  // ТЕСТ: отметить оплату (потом заменишь реальной оплатой)
   bot.command("pay_ok", async (ctx) => {
     const userId = ctx.from?.id;
     if (!userId) return;
@@ -459,78 +489,84 @@ export async function startBot() {
 
     setState(userId, { paid: true, step: "awaiting_consents" });
 
-    await ctx.reply("✅ Оплата подтверждена (тестовый режим). Теперь нужно принять согласия.", {
-      parse_mode: "Markdown",
-    });
-    await ctx.reply(CONSENT_SCREEN_TEXT, { parse_mode: "Markdown", ...consentsKeyboard() });
+    await ctx.reply("✅ Оплата подтверждена (тестовый режим). Теперь нужно принять согласия.");
+    await ctx.reply(CONSENT_SCREEN_TEXT, consentsKeyboard());
   });
 
-  // -------- Callback router --------
+  // ===================== CALLBACK ROUTER =====================
   bot.on("callback_query", async (ctx) => {
     const userId = ctx.from?.id;
     const data = ctx.callbackQuery?.data;
     if (!userId || !data) return;
 
     await ctx.answerCbQuery().catch(() => {});
-
     const st = getState(userId);
 
-    // ===== MENU =====
+    // MENU
     if (data === "MENU_HOME") {
       await ctx.reply("Главное меню:", mainMenuKeyboard());
       return;
     }
+
     if (data === "MENU_START") {
-      await ctx.reply(TARIFFS_TEXT, { parse_mode: "Markdown", ...tariffsKeyboard() });
-      return;
-    }
-    if (data === "MENU_TARIFFS") {
-      await ctx.reply(TARIFFS_TEXT, { parse_mode: "Markdown", ...backToMenuKeyboard() });
-      return;
-    }
-    if (data === "MENU_PAYMENTS") {
-      await ctx.reply(PAYMENTS_AND_REFUNDS_TEXT, { parse_mode: "Markdown", ...backToMenuKeyboard() });
-      return;
-    }
-    if (data === "MENU_PRIVACY") {
-      await ctx.reply(PRIVACY_TEXT, { parse_mode: "Markdown", ...backToMenuKeyboard() });
-      return;
-    }
-    if (data === "MENU_SUPPORT") {
-      await ctx.reply(
-        `🆘 Поддержка\n📧 ${SUPPORT_EMAIL}`,
-        { parse_mode: "Markdown", ...backToMenuKeyboard() }
-      );
+      await ctx.reply(TARIFFS_TEXT, tariffsKeyboard());
       return;
     }
 
-    // ===== ERROR REPORT =====
+    if (data === "MENU_TARIFFS") {
+      await ctx.reply(TARIFFS_TEXT, backToMenuKeyboard());
+      return;
+    }
+
+    // ✅ FIXED: PRIVACY (long + no markdown)
+    if (data === "MENU_PRIVACY") {
+      try {
+        await replyLong(ctx, PRIVACY_TEXT, backToMenuKeyboard());
+      } catch (err) {
+        console.error("❌ PRIVACY send error:", err?.response?.description || err.message || err);
+        await ctx.reply("Не удалось показать политику (техническая ошибка). Попробуйте позже.", backToMenuKeyboard());
+      }
+      return;
+    }
+
+    // ✅ also safe-send payments
+    if (data === "MENU_PAYMENTS") {
+      try {
+        await replyLong(ctx, PAYMENTS_AND_REFUNDS_TEXT, backToMenuKeyboard());
+      } catch (err) {
+        console.error("❌ PAYMENTS send error:", err?.response?.description || err.message || err);
+        await ctx.reply("Не удалось показать правила оплаты (техническая ошибка). Попробуйте позже.", backToMenuKeyboard());
+      }
+      return;
+    }
+
+    if (data === "MENU_SUPPORT") {
+      await ctx.reply(`🆘 Поддержка\n${SUPPORT_EMAIL}`, backToMenuKeyboard());
+      return;
+    }
+
+    // ERROR REPORT
     if (data === "MENU_ERROR") {
       setState(userId, { step: "wait_error_text" });
       await ctx.reply(
-        "⚠️ *Сообщить об ошибке*\nОпишите, пожалуйста, что произошло. Мы рассмотрим обращение (при тех. неисправности возможно решение по возврату).",
-        {
-          parse_mode: "Markdown",
-          reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback("⬅️ Отмена", "MENU_HOME")],
-          ]).reply_markup,
-        }
+        "⚠️ Сообщить об ошибке\nОпишите, пожалуйста, что произошло. Мы рассмотрим обращение (при тех. неисправности возможно решение по возврату).",
+        Markup.inlineKeyboard([[Markup.button.callback("⬅️ Отмена", "MENU_HOME")]])
       );
       return;
     }
 
-    // ===== DELETE DATA =====
+    // DELETE DATA
     if (data === "MENU_DELETE") {
       await ctx.reply(
-        "🗑 *Удаление персональных данных*\n\nЭто действие необратимо.\n\nПосле удаления:\n• история/результаты будут удалены\n• согласия будут отозваны\n• для повторного использования потребуется новое согласие",
-        { parse_mode: "Markdown", ...deleteStep1Keyboard() }
+        "🗑 Удаление персональных данных\n\nЭто действие необратимо.\n\nПосле удаления:\n• история/результаты будут удалены\n• согласия будут отозваны\n• для повторного использования потребуется новое согласие",
+        deleteStep1Keyboard()
       );
       return;
     }
     if (data === "DELETE_STEP1") {
       await ctx.reply(
         "Подтвердите удаление персональных данных. Это действие нельзя отменить.",
-        { parse_mode: "Markdown", ...deleteStep2Keyboard() }
+        deleteStep2Keyboard()
       );
       return;
     }
@@ -543,22 +579,33 @@ export async function startBot() {
       return;
     }
 
-    // ===== DOCS =====
+    // DOCS (safe long send)
     if (data === "DOC_CONSENT_PD") {
-      await ctx.reply(CONSENT_PD_TEXT, { parse_mode: "Markdown", ...backToMenuKeyboard() });
-      return;
-    }
-    if (data === "DOC_CONSENT_THIRD") {
-      await ctx.reply(CONSENT_THIRD_TEXT, { parse_mode: "Markdown", ...backToMenuKeyboard() });
+      try {
+        await replyLong(ctx, CONSENT_PD_TEXT, backToMenuKeyboard());
+      } catch (err) {
+        console.error("❌ CONSENT_PD send error:", err?.response?.description || err.message || err);
+        await ctx.reply("Не удалось показать документ (техническая ошибка).", backToMenuKeyboard());
+      }
       return;
     }
 
-    // ===== TARIFF SELECT =====
+    if (data === "DOC_CONSENT_THIRD") {
+      try {
+        await replyLong(ctx, CONSENT_THIRD_TEXT, backToMenuKeyboard());
+      } catch (err) {
+        console.error("❌ CONSENT_THIRD send error:", err?.response?.description || err.message || err);
+        await ctx.reply("Не удалось показать документ (техническая ошибка).", backToMenuKeyboard());
+      }
+      return;
+    }
+
+    // TARIFF SELECT
     if (data.startsWith("TARIFF_")) {
       const plan = data.replace("TARIFF_", "");
       if (!["free", "pro", "premium"].includes(plan)) return;
 
-      // при смене тарифа сбрасываем "оплату" и согласия (чтобы было строго после оплаты)
+      // strict: consents only after payment → reset
       setState(userId, {
         plan,
         paid: false,
@@ -571,35 +618,32 @@ export async function startBot() {
         consentPdHash: null,
         consentThirdHash: null,
         step: "awaiting_payment",
+        deleted: false,
       });
 
       if (plan === "free") {
         await ctx.reply(
-          "Вы выбрали тариф *FREE*.\n\nДля доступа к анализу по фото нужен PRO или PREMIUM.\nВыберите тариф в меню.",
-          { parse_mode: "Markdown", ...backToMenuKeyboard() }
+          "Вы выбрали тариф FREE.\n\nДля анализа по фото нужен PRO или PREMIUM.",
+          backToMenuKeyboard()
         );
         return;
       }
 
       await ctx.reply(
-        `Вы выбрали тариф *${plan.toUpperCase()}*.\n\nДля продолжения оплатите тариф.\n(Тест: отправьте команду /pay_ok)\n\nПосле оплаты появится окно согласий.`,
-        { parse_mode: "Markdown", ...backToMenuKeyboard() }
+        `Вы выбрали тариф ${plan.toUpperCase()}.\n\nОплатите тариф.\n(Тест: отправьте команду /pay_ok)\n\nПосле оплаты появится окно согласий.`,
+        backToMenuKeyboard()
       );
       return;
     }
 
-    // ===== CONSENTS =====
+    // CONSENTS
     if (data === "CONSENT_DECLINE") {
-      setState(userId, { step: "awaiting_consents" });
       await ctx.reply(
         "Без согласия я не могу обрабатывать фото и сообщения.\n\nВы можете вернуться в меню или обратиться в поддержку.",
-        {
-          parse_mode: "Markdown",
-          reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback("🆘 Поддержка", "MENU_SUPPORT")],
-            [Markup.button.callback("⬅️ В главное меню", "MENU_HOME")],
-          ]).reply_markup,
-        }
+        Markup.inlineKeyboard([
+          [Markup.button.callback("🆘 Поддержка", "MENU_SUPPORT")],
+          [Markup.button.callback("⬅️ В главное меню", "MENU_HOME")],
+        ])
       );
       return;
     }
@@ -607,15 +651,9 @@ export async function startBot() {
     if (data === "CONSENT_ACCEPT_ALL") {
       const st2 = getState(userId);
       if (!st2.paid) {
-        await ctx.reply("⚠️ Согласие запрашивается после оплаты. Сначала оплатите тариф.", {
-          parse_mode: "Markdown",
-          ...backToMenuKeyboard(),
-        });
+        await ctx.reply("⚠️ Согласие запрашивается после оплаты. Сначала оплатите тариф.", backToMenuKeyboard());
         return;
       }
-
-      const pdHash = sha256(CONSENT_PD_TEXT);
-      const thirdHash = sha256(CONSENT_THIRD_TEXT);
 
       setState(userId, {
         consentPd: true,
@@ -624,21 +662,18 @@ export async function startBot() {
         consentThirdAt: new Date().toISOString(),
         consentPdVersion: DOC_VERSIONS.consent_pd,
         consentThirdVersion: DOC_VERSIONS.consent_third,
-        consentPdHash: pdHash,
-        consentThirdHash: thirdHash,
+        consentPdHash: sha256(CONSENT_PD_TEXT),
+        consentThirdHash: sha256(CONSENT_THIRD_TEXT),
         step: "awaiting_photo",
-        deleted: false, // если был deleted, теперь начинаем заново
+        deleted: false,
       });
 
-      await ctx.reply(
-        "✅ Согласия приняты. Теперь пришлите фото лица.\n\n" + requirementsText(),
-        { parse_mode: "Markdown", ...backToMenuKeyboard() }
-      );
+      await ctx.reply("✅ Согласия приняты. Теперь пришлите фото лица.\n\n" + requirementsText(), backToMenuKeyboard());
       return;
     }
   });
 
-  // -------- Text handler: error report capture + help --------
+  // ===================== TEXT HANDLER =====================
   bot.on("text", async (ctx) => {
     const userId = ctx.from?.id;
     if (!userId) return;
@@ -646,23 +681,16 @@ export async function startBot() {
     const st = getState(userId);
 
     if (st.step === "wait_error_text") {
-      // TODO: записать в БД error_reports (user_id, text, created_at, plan, paid, lastPhotoMeta)
+      // TODO: save to DB (error_reports)
       setState(userId, { step: "idle" });
-
-      await ctx.reply(
-        "✅ Спасибо! Сообщение об ошибке принято. Мы рассмотрим обращение.",
-        backToMenuKeyboard()
-      );
+      await ctx.reply("✅ Спасибо! Сообщение об ошибке принято. Мы рассмотрим обращение.", backToMenuKeyboard());
       return;
     }
 
-    await ctx.reply(
-      "Выберите действие в меню 👇",
-      mainMenuKeyboard()
-    );
+    await ctx.reply("Выберите действие в меню 👇", mainMenuKeyboard());
   });
 
-  // -------- Photo handler (blocked until paid + consents) --------
+  // ===================== PHOTO HANDLER =====================
   bot.on("photo", async (ctx) => {
     const userId = ctx.from?.id;
     if (!userId) return;
@@ -675,20 +703,14 @@ export async function startBot() {
         return;
       }
       if (!st.plan || st.plan === "free") {
-        await ctx.reply("Чтобы отправить фото, выберите тариф PRO или PREMIUM.", {
-          parse_mode: "Markdown",
-          ...tariffsKeyboard(),
-        });
+        await ctx.reply("Чтобы отправить фото, выберите тариф PRO или PREMIUM.", tariffsKeyboard());
         return;
       }
       if (!st.paid) {
-        await ctx.reply("Чтобы отправить фото, сначала оплатите тариф. (Тест: /pay_ok)", {
-          parse_mode: "Markdown",
-          ...backToMenuKeyboard(),
-        });
+        await ctx.reply("Чтобы отправить фото, сначала оплатите тариф. (Тест: /pay_ok)", backToMenuKeyboard());
         return;
       }
-      await ctx.reply(CONSENT_SCREEN_TEXT, { parse_mode: "Markdown", ...consentsKeyboard() });
+      await ctx.reply(CONSENT_SCREEN_TEXT, consentsKeyboard());
       return;
     }
 
