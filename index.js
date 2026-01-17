@@ -5,95 +5,95 @@ import express from "express";
 import fetch from "node-fetch";
 
 // ================== КОНСТАНТЫ ==================
-const PORT = process.env.PORT || 3000;
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-const PRIVACY_POLICY_URL = "https://ваш-сайт.ru/privacy";
-const SUPPORT_EMAIL = "cherkashina720@gmail.com";
+const ПОРТ = process.env.PORT || 3000;
+const ТОКЕН_ТЕЛЕГРАМ = process.env.TELEGRAM_TOKEN; // 🔹 ЗАМЕНИТЕ на свой токен бота
+const ССЫЛКА_ПОЛИТИКА = "https://ваш-сайт.ru/privacy"; // 🔹 ЗАМЕНИТЕ на свою ссылку
+const ПОЧТА_ПОДДЕРЖКИ = "cherkashina720@gmail.com";
 
 // Проверяем обязательные переменные
-if (!TELEGRAM_TOKEN) {
-  console.error("❌ ОШИБКА: TELEGRAM_TOKEN не установлен");
+if (!ТОКЕН_ТЕЛЕГРАМ) {
+  console.error("❌ ОШИБКА: ТОКЕН_ТЕЛЕГРАМ не установлен");
   process.exit(1);
 }
 
 console.log("✅ Бот запускается...");
 
 // ================== ТЕСТОВЫЕ ЦЕНЫ ==================
-const TEST_PRICES = {
+const ТЕСТОВЫЕ_ЦЕНЫ = {
   basic: 500,    // 5 рублей
   pro: 1000,     // 10 рублей
   premium: 1500  // 15 рублей
 };
 
-const getPriceDisplay = (tariff) => {
-  const price = TEST_PRICES[tariff] || 0;
-  return `${price / 100}₽`;
-};
+function получитьЦенуДляПоказа(тариф) {
+  const цена = ТЕСТОВЫЕ_ЦЕНЫ[тариф] || 0;
+  return `${цена / 100}₽`;
+}
 
 // ================== СОСТОЯНИЕ ПОЛЬЗОВАТЕЛЕЙ ==================
-const userStates = new Map();
+const состояниеПользователей = new Map();
 
 // ================== TELEGRAM API ==================
-const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
+const АДРЕС_ТЕЛЕГРАМ_АПИ = `https://api.telegram.org/bot${ТОКЕН_ТЕЛЕГРАМ}`;
 
-async function telegramRequest(method, data) {
+async function запросТелеграм(метод, данные) {
   try {
-    const response = await fetch(`${TELEGRAM_API}/${method}`, {
+    const ответ = await fetch(`${АДРЕС_ТЕЛЕГРАМ_АПИ}/${метод}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-      timeout: 10000
+      body: JSON.stringify(данные),
+      timeout: 30000 // Увеличен таймаут для Render
     });
-    return await response.json();
-  } catch (error) {
-    console.error(`Ошибка Telegram API (${method}):`, error.message);
-    return { ok: false };
+    return await ответ.json();
+  } catch (ошибка) {
+    console.error(`❌ Ошибка Telegram API (${метод}):`, ошибка.message);
+    return { ok: false, описание: ошибка.message };
   }
 }
 
-async function sendMessage(chatId, text, replyMarkup = null) {
-  return telegramRequest('sendMessage', {
-    chat_id: chatId,
-    text: text,
+async function отправитьСообщение(IDчата, текст, клавиатура = null) {
+  return запросТелеграм('sendMessage', {
+    chat_id: IDчата,
+    text: текст,
     parse_mode: 'HTML',
-    reply_markup: replyMarkup,
+    reply_markup: клавиатура,
     disable_web_page_preview: true
   });
 }
 
-async function answerCallbackQuery(callbackQueryId, text = '') {
-  return telegramRequest('answerCallbackQuery', {
-    callback_query_id: callbackQueryId,
-    text: text
+async function ответитьНаCallback(IDколбэка, текст = '') {
+  return запросТелеграм('answerCallbackQuery', {
+    callback_query_id: IDколбэка,
+    text: текст
   });
 }
 
 // ================== КЛАВИАТУРЫ ==================
-const Keyboards = {
-  main: {
+const Клавиатуры = {
+  основная: {
     inline_keyboard: [
       [{ text: "📚 О сервисе HAIRbot", callback_data: "about" }],
       [{ text: "📖 Примеры разборов", callback_data: "examples" }],
       [{ text: "🎁 БЕСПЛАТНЫЙ АНАЛИЗ", callback_data: "free" }],
-      [{ text: `💎 BASIC - ${getPriceDisplay('basic')} (тест)`, callback_data: "basic" }],
-      [{ text: `✨ PRO - ${getPriceDisplay('pro')} (тест)`, callback_data: "pro" }],
-      [{ text: `👑 PREMIUM - ${getPriceDisplay('premium')} (тест)`, callback_data: "premium" }],
+      [{ text: `💎 BASIC - ${получитьЦенуДляПоказа('basic')} (тест)`, callback_data: "basic" }],
+      [{ text: `✨ PRO - ${получитьЦенуДляПоказа('pro')} (тест)`, callback_data: "pro" }],
+      [{ text: `👑 PREMIUM - ${получитьЦенуДляПоказа('premium')} (тест)`, callback_data: "premium" }],
       [
         { text: "💰 Сравнить тарифы", callback_data: "tariffs" },
-        { text: "🔒 Политика", url: PRIVACY_POLICY_URL }
+        { text: "🔒 Политика", url: ССЫЛКА_ПОЛИТИКА }
       ],
       [
-        { text: "📧 Поддержка", url: `mailto:${SUPPORT_EMAIL}` },
+        { text: "📧 Поддержка", url: `mailto:${ПОЧТА_ПОДДЕРЖКИ}` },
         { text: "🏠 Главное меню", callback_data: "menu" }
       ]
     ]
   },
   
-  back: {
+  назад: {
     inline_keyboard: [[{ text: "🏠 Главное меню", callback_data: "menu" }]]
   },
   
-  consent: {
+  согласие: {
     inline_keyboard: [
       [{ text: "✅ Согласен(а)", callback_data: "consent_yes" }],
       [{ text: "❌ Не согласен(а)", callback_data: "consent_no" }]
@@ -102,22 +102,31 @@ const Keyboards = {
 };
 
 // ================== ОБРАБОТЧИКИ ==================
-async function handleStart(userId, chatId) {
-  const message = 
+async function обработкаСтарт(IDпользователя, IDчата) {
+  console.log('▶️ Внутри обработкаСтарт, пытаюсь отправить сообщение...');
+  
+  const сообщение = 
     `👋 <b>Добро пожаловать в HAIRbot!</b>\n\n` +
     `💰 <b>ТЕСТОВЫЙ РЕЖИМ</b>\n` +
     `Цены для тестирования:\n` +
-    `• BASIC: ${getPriceDisplay('basic')}\n` +
-    `• PRO: ${getPriceDisplay('pro')}\n` +
-    `• PREMIUM: ${getPriceDisplay('premium')}\n\n` +
+    `• BASIC: ${получитьЦенуДляПоказа('basic')}\n` +
+    `• PRO: ${получитьЦенуДляПоказа('pro')}\n` +
+    `• PREMIUM: ${получитьЦенуДляПоказа('premium')}\n\n` +
     `Я помогу подобрать идеальную стрижку по форме вашего лица.\n` +
     `Выберите действие:`;
   
-  await sendMessage(chatId, message, Keyboards.main);
+  try {
+    const результат = await отправитьСообщение(IDчата, сообщение, Клавиатуры.основная);
+    console.log('📤 Результат отправитьСообщение:', результат?.ok ? '✅ Успех' : '❌ Ошибка', результат);
+  } catch (ошибка) {
+    console.error('🔥 Ошибка в отправитьСообщение:', ошибка.message);
+  }
+  
+  console.log('◀️ обработкаСтарт завершен');
 }
 
-async function handleAbout(userId, chatId) {
-  const message = 
+async function обработкаОсервисе(IDпользователя, IDчата) {
+  const сообщение = 
     `📋 <b>О сервисе HAIRbot</b>\n\n` +
     `Автоматизированный анализ формы лица и подбор стрижек.\n\n` +
     `🔹 <b>Как это работает:</b>\n` +
@@ -129,41 +138,41 @@ async function handleAbout(userId, chatId) {
     `• Фото удаляются после анализа\n` +
     `• Личность не определяется\n` +
     `• Данные не передаются третьим лицам без согласия\n\n` +
-    `📧 <b>Поддержка:</b> ${SUPPORT_EMAIL}`;
+    `📧 <b>Поддержка:</b> ${ПОЧТА_ПОДДЕРЖКИ}`;
   
-  await sendMessage(chatId, message, Keyboards.back);
+  await отправитьСообщение(IDчата, сообщение, Клавиатуры.назад);
 }
 
-async function handleTariffs(userId, chatId) {
-  const message = 
+async function обработкаТарифы(IDпользователя, IDчата) {
+  const сообщение = 
     `💰 <b>Тарифы HAIRbot</b>\n\n` +
     `🎯 <b>ТЕСТОВЫЕ ЦЕНЫ (для проверки работы)</b>\n\n` +
     `🎁 <b>БЕСПЛАТНЫЙ</b> (1 раз)\n` +
     `• Определение формы лица\n` +
     `• 2 рекомендации\n` +
     `• 2 изображения\n\n` +
-    `💎 <b>BASIC - ${getPriceDisplay('basic')}</b>\n` +
+    `💎 <b>BASIC - ${получитьЦенуДляПоказа('basic')}</b>\n` +
     `• Полный анализ лица\n` +
     `• 3 рекомендации стрижек\n` +
     `• 3 изображения\n\n` +
-    `✨ <b>PRO - ${getPriceDisplay('pro')}</b>\n` +
+    `✨ <b>PRO - ${получитьЦенуДляПоказа('pro')}</b>\n` +
     `• Всё из BASIC +\n` +
     `• Анализ цветотипа\n` +
     `• 4 рекомендации с цветами\n` +
     `• PDF-отчет\n\n` +
-    `👑 <b>PREMIUM - ${getPriceDisplay('premium')}</b>\n` +
+    `👑 <b>PREMIUM - ${получитьЦенуДляПоказа('premium')}</b>\n` +
     `• Всё из PRO +\n` +
     `• Учёт текстуры волос\n` +
     `• 5 рекомендаций\n` +
     `• Приоритетная обработка\n\n` +
     `⚠️ <i>Это тестовые цены для проверки работы бота.</i>\n\n` +
-    `📧 <b>Поддержка:</b> ${SUPPORT_EMAIL}`;
+    `📧 <b>Поддержка:</b> ${ПОЧТА_ПОДДЕРЖКИ}`;
   
-  await sendMessage(chatId, message, Keyboards.main);
+  await отправитьСообщение(IDчата, сообщение, Клавиатуры.основная);
 }
 
-async function handleExamples(userId, chatId) {
-  const message = 
+async function обработкаПримеры(IDпользователя, IDчата) {
+  const сообщение = 
     `📖 <b>Примеры разборов</b>\n\n` +
     `Посмотрите, как работает HAIRbot на реальных примерах:\n\n` +
     `👩 <b>Пример 1:</b> Овальное лицо\n` +
@@ -178,105 +187,104 @@ async function handleExamples(userId, chatId) {
     `• Форма: квадратная\n` +
     `• Рекомендации: длинные слои\n` +
     `• Цвет: шоколадный\n\n` +
-    `📧 <b>Вопросы?</b> Пишите: ${SUPPORT_EMAIL}`;
+    `📧 <b>Вопросы?</b> Пишите: ${ПОЧТА_ПОДДЕРЖКИ}`;
   
-  await sendMessage(chatId, message, Keyboards.back);
+  await отправитьСообщение(IDчата, сообщение, Клавиатуры.назад);
 }
 
-async function handleTariffSelection(userId, chatId, tariff) {
-  if (tariff === 'free') {
+async function обработкаВыборТарифа(IDпользователя, IDчата, тариф) {
+  if (тариф === 'free') {
     // Сохраняем состояние
-    userStates.set(userId, { mode: tariff, awaitingPhoto: true });
+    состояниеПользователей.set(IDпользователя, { mode: тариф, awaitingPhoto: true });
     
-    await sendMessage(chatId,
+    await отправитьСообщение(IDчата,
       `🎁 <b>Бесплатный анализ</b>\n\n` +
       `📸 <b>Отправьте фото лица:</b>\n` +
       `• Лицо анфас\n` +
       `• Хорошее освещение\n` +
       `• Чёткое изображение\n` +
       `• Без очков/головных уборов`,
-      Keyboards.back
+      Клавиатуры.назад
     );
   } else {
     // Для платных тарифов показываем сообщение о тестовом режиме
-    await sendMessage(chatId,
-      `💳 <b>Оплата тарифа ${tariff.toUpperCase()}</b>\n\n` +
+    await отправитьСообщение(IDчата,
+      `💳 <b>Оплата тарифа ${тариф.toUpperCase()}</b>\n\n` +
       `В тестовом режиме оплата временно недоступна.\n` +
-      `Сумма: <b>${getPriceDisplay(tariff)}</b> (тестовая цена)\n\n` +
+      `Сумма: <b>${получитьЦенуДляПоказа(тариф)}</b> (тестовая цена)\n\n` +
       `📧 <b>Для тестирования оплаты свяжитесь с поддержкой:</b>\n` +
-      `${SUPPORT_EMAIL}`,
-      Keyboards.back
+      `${ПОЧТА_ПОДДЕРЖКИ}`,
+      Клавиатуры.назад
     );
   }
 }
 
-async function handlePhoto(userId, chatId, photo) {
-  const state = userStates.get(userId);
+async function обработкаФото(IDпользователя, IDчата, фото) {
+  const состояние = состояниеПользователей.get(IDпользователя);
   
-  if (!state?.awaitingPhoto) {
-    await sendMessage(chatId,
+  if (!состояние?.awaitingPhoto) {
+    await отправитьСообщение(IDчата,
       "📸 Сначала выберите тариф в меню.",
-      Keyboards.main
+      Клавиатуры.основная
     );
     return;
   }
   
-  const tariff = state.mode || 'free';
+  const тариф = состояние.mode || 'free';
   
   // Начинаем обработку
-  await sendMessage(chatId,
+  await отправитьСообщение(IDчата,
     `⏳ <b>Начинаю анализ...</b>\n\n` +
-    `Тариф: <b>${tariff.toUpperCase()}</b>\n` +
+    `Тариф: <b>${тариф.toUpperCase()}</b>\n` +
     `Пожалуйста, подождите...`,
-    Keyboards.back
+    Клавиатуры.назад
   );
   
   // Имитация обработки
   setTimeout(async () => {
-    await sendMessage(chatId,
+    await отправитьСообщение(IDчата,
       `✅ <b>Анализ завершён!</b>\n\n` +
       `В тестовом режиме модуль анализа работает в упрощённом виде.\n\n` +
       `📧 <b>Вопросы или предложения?</b>\n` +
-      `${SUPPORT_EMAIL}`,
-      Keyboards.main
+      `${ПОЧТА_ПОДДЕРЖКИ}`,
+      Клавиатуры.основная
     );
     
     // Очищаем состояние
-    userStates.delete(userId);
+    состояниеПользователей.delete(IDпользователя);
   }, 3000);
 }
 
 // ================== ОБРАБОТКА ОБНОВЛЕНИЙ ==================
-async function handleUpdate(update) {
+async function обработкаОбновления(update) {
   console.log(`📨 Получен update ID: ${update.update_id}`);
-  console.log('📄 Содержимое update:', JSON.stringify(update, null, 2)); // ВАЖНО: увидим структуру
-
+  
   try {
     // Обработка сообщений
     if (update.message) {
-      const userId = update.message.from.id;
-      const chatId = update.message.chat.id;
-      const text = update.message.text || '';
+      const IDпользователя = update.message.from.id;
+      const IDчата = update.message.chat.id;
+      const текст = update.message.text || '';
       
-      console.log(`👤 Пользователь ${userId} в чате ${chatId} написал: "${text}"`);
+      console.log(`👤 Пользователь ${IDпользователя} в чате ${IDчата} написал: "${текст}"`);
 
-      if (text === '/start') {
-        console.log('🎯 Обнаружена команда /start, вызываю handleStart...');
-        await handleStart(userId, chatId);
-        console.log('✅ handleStart выполнен (вроде бы)');
+      if (текст === '/start') {
+        console.log('🎯 Обнаружена команда /start, вызываю обработкаСтарт...');
+        await обработкаСтарт(IDпользователя, IDчата);
+        console.log('✅ обработкаСтарт выполнен (вроде бы)');
         return;
       }
 
       if (update.message.photo?.length > 0) {
         console.log('🖼️ Получено фото...');
-        const photo = update.message.photo[update.message.photo.length - 1];
-        await handlePhoto(userId, chatId, photo);
+        const фото = update.message.photo[update.message.photo.length - 1];
+        await обработкаФото(IDпользователя, IDчата, фото);
         return;
       }
 
-      if (text) {
+      if (текст) {
         console.log('📝 Отправляю стандартный ответ на текст...');
-        await sendMessage(chatId, "🤖 Используйте кнопки меню или отправьте /start", Keyboards.main);
+        await отправитьСообщение(IDчата, "🤖 Используйте кнопки меню или отправьте /start", Клавиатуры.основная);
       }
     }
 
@@ -284,54 +292,72 @@ async function handleUpdate(update) {
     if (update.callback_query) {
       console.log('🔄 Обрабатываю нажатие кнопки...');
       const callback = update.callback_query;
-      const userId = callback.from.id;
-      const chatId = callback.message.chat.id;
-      const data = callback.data;
+      const IDпользователя = callback.from.id;
+      const IDчата = callback.message.chat.id;
+      const данные = callback.data;
 
-      await answerCallbackQuery(callback.id);
-      console.log(`🔼 Callback data: "${data}" от пользователя ${userId}`);
+      await ответитьНаCallback(callback.id);
+      console.log(`🔼 Callback data: "${данные}" от пользователя ${IDпользователя}`);
 
-      switch(data) {
+      switch(данные) {
         case 'menu':
-          await handleStart(userId, chatId);
+          await обработкаСтарт(IDпользователя, IDчата);
           break;
         case 'about':
-          await handleAbout(userId, chatId);
+          await обработкаОсервисе(IDпользователя, IDчата);
           break;
-        // ... остальные case
+        case 'tariffs':
+          await обработкаТарифы(IDпользователя, IDчата);
+          break;
+        case 'examples':
+          await обработкаПримеры(IDпользователя, IDчата);
+          break;
+        case 'free':
+        case 'basic':
+        case 'pro':
+        case 'premium':
+          await обработкаВыборТарифа(IDпользователя, IDчата, данные);
+          break;
+        case 'consent_yes':
+          await отправитьСообщение(IDчата, "✅ Согласие получено!", Клавиатуры.основная);
+          break;
+        case 'consent_no':
+          await отправитьСообщение(IDчата, "❌ Согласие отклонено.", Клавиатуры.основная);
+          break;
         default:
-          await sendMessage(chatId, "Неизвестная команда", Keyboards.main);
+          await отправитьСообщение(IDчата, "Неизвестная команда", Клавиатуры.основная);
           break;
       }
     }
 
     console.log(`✓ Update ${update.update_id} обработан без видимых ошибок.`);
 
-  } catch (error) {
-    console.error('❌ КРИТИЧЕСКАЯ ОШИБКА в handleUpdate:', error);
-    console.error('Стек ошибки:', error.stack);
+  } catch (ошибка) {
+    console.error('❌ КРИТИЧЕСКАЯ ОШИБКА в обработкаОбновления:', ошибка);
+    console.error('Стек ошибки:', ошибка.stack);
   }
 }
+
 // ================== EXPRESS APP ==================
-const app = express();
+const приложение = express();
 
 // Middleware для парсинга JSON
-app.use(express.json({ limit: "10mb" }));
+приложение.use(express.json({ limit: "10mb" }));
 
 // Health check endpoint
-app.get("/health", (req, res) => {
-  res.status(200).json({ 
+приложение.get("/health", (запрос, ответ) => {
+  ответ.status(200).json({ 
     status: "ok",
     service: "HAIRbot",
     timestamp: new Date().toISOString(),
     test_mode: true,
-    support_email: SUPPORT_EMAIL
+    support_email: ПОЧТА_ПОДДЕРЖКИ
   });
 });
 
 // Root endpoint
-app.get("/", (req, res) => {
-  res.send(`
+приложение.get("/", (запрос, ответ) => {
+  ответ.send(`
     <!DOCTYPE html>
     <html>
     <head>
@@ -349,11 +375,11 @@ app.get("/", (req, res) => {
         <p class="status">✅ Сервис работает</p>
         <p>Тестовый режим с ценами:</p>
         <ul>
-          <li>BASIC: ${getPriceDisplay('basic')}</li>
-          <li>PRO: ${getPriceDisplay('pro')}</li>
-          <li>PREMIUM: ${getPriceDisplay('premium')}</li>
+          <li>BASIC: ${получитьЦенуДляПоказа('basic')}</li>
+          <li>PRO: ${получитьЦенуДляПоказа('pro')}</li>
+          <li>PREMIUM: ${получитьЦенуДляПоказа('premium')}</li>
         </ul>
-        <p>📧 Поддержка: ${SUPPORT_EMAIL}</p>
+        <p>📧 Поддержка: ${ПОЧТА_ПОДДЕРЖКИ}</p>
         <p><a href="/health">Проверить статус</a></p>
       </div>
     </body>
@@ -362,39 +388,45 @@ app.get("/", (req, res) => {
 });
 
 // Webhook endpoint
-app.post("/webhook", async (req, res) => {
+приложение.post("/webhook", async (запрос, ответ) => {
   console.log("📨 Webhook получен");
   
   // Всегда отвечаем OK, чтобы Telegram не повторял запрос
-  res.status(200).send('OK');
+  ответ.status(200).send('OK');
   
   // Обрабатываем update асинхронно
-  if (req.body && req.body.update_id) {
+  if (запрос.body && запрос.body.update_id) {
     try {
-      await handleUpdate(req.body);
-    } catch (error) {
-      console.error("❌ Ошибка в обработке webhook:", error);
+      await обработкаОбновления(запрос.body);
+    } catch (ошибка) {
+      console.error("❌ Ошибка в обработке webhook:", ошибка);
     }
   }
 });
 
 // Запуск сервера
-app.listen(PORT, () => {
+приложение.listen(ПОРТ, () => {
   console.log(`
 🎉 HAIRbot запущен!
-📍 Порт: ${PORT}
+📍 Порт: ${ПОРТ}
 💰 Режим: ТЕСТОВЫЙ
-📧 Поддержка: ${SUPPORT_EMAIL}
-🌐 Health: http://localhost:${PORT}/health
-📨 Webhook: http://localhost:${PORT}/webhook
+📧 Поддержка: ${ПОЧТА_ПОДДЕРЖКИ}
+🌐 Health: http://localhost:${ПОРТ}/health
+📨 Webhook: http://localhost:${ПОРТ}/webhook
+  `);
+  
+  // 🔹 ВАЖНО: Выполните эту команду после запуска для настройки webhook:
+  console.log(`
+🚀 ДЛЯ НАСТРОЙКИ WEBHOOK ВЫПОЛНИТЕ КОМАНДУ:
+curl -X POST "https://api.telegram.org/bot${ТОКЕН_ТЕЛЕГРАМ}/setWebhook?url=https://hairstyle-bot.onrender.com/webhook"
   `);
 });
 
 // Обработка ошибок
-process.on('uncaughtException', (error) => {
-  console.error('❌ Необработанная ошибка:', error);
+process.on('uncaughtException', (ошибка) => {
+  console.error('❌ Необработанная ошибка:', ошибка);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Необработанный промис:', reason);
+process.on('unhandledRejection', (причина, промис) => {
+  console.error('❌ Необработанный промис:', причина);
 });
