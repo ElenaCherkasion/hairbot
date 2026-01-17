@@ -1,70 +1,62 @@
-// src/index.js - УПРОЩЕННАЯ РАБОЧАЯ ВЕРСИЯ
-console.log('🔧 Загрузка src/index.js');
+import express from "express";
+import fetch from "node-fetch";
 
-// ЭКСПОРТИРУЕМ СРАЗУ
+// ================== CONFIG ==================
+const PORT = process.env.PORT || 3000;
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
+
+// ================== START BOT ==================
 export async function startBot() {
-  console.log('🚀 Вызов startBot()');
-  
-  try {
-    // Динамические импорты (безопаснее)
-    const { Telegraf, session } = await import('telegraf');
-    const dotenv = await import('dotenv');
-    
-    // Загрузка переменных
-    dotenv.default?.config();
-    
-    // Проверка токена
-    const token = process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
-    if (!token) {
-      throw new Error('TELEGRAM_TOKEN не установлен');
-    }
-    
-    console.log('✅ Токен получен');
-    
-    // Создание бота
-    const bot = new Telegraf(token);
-    bot.use(session());
-    
-    // Простые обработчики (без импорта проблемных файлов)
-    bot.start((ctx) => {
-      console.log(`👤 /start от ${ctx.from.id}`);
-      ctx.reply('🎉 Привет! Я HairBot!\nОтправьте фото для анализа лица.');
-    });
-    
-    bot.help((ctx) => {
-      ctx.reply('Помощь:\n/start - начать\n/photo - анализ фото');
-    });
-    
-    bot.command('photo', (ctx) => {
-      ctx.reply('📸 Отправьте фото лица для анализа');
-    });
-    
-    bot.on('photo', async (ctx) => {
-      console.log(`📸 Фото от ${ctx.from.id}`);
-      await ctx.reply('🔄 Анализирую фото...');
-      setTimeout(() => {
-        ctx.reply('✅ Готово! Тип лица: овальное\nРекомендации: каре, каскад');
-      }, 1500);
-    });
-    
-    // Получение информации о боте
-    const botInfo = await bot.telegram.getMe();
-    console.log(`🤖 Бот запущен: @${botInfo.username}`);
-    
-    // Запуск
-    bot.launch({
-      dropPendingUpdates: true
-    });
-    
-    console.log('✅ HairBot успешно запущен!');
-    
-    return { bot };
-    
-  } catch (error) {
-    console.error('❌ Ошибка запуска:', error.message);
-    console.error(error.stack);
-    throw error;
+  console.log("🤖 startBot() вызван");
+
+  if (!TELEGRAM_TOKEN) {
+    throw new Error("TELEGRAM_TOKEN не установлен");
   }
+
+  const app = express();
+  app.use(express.json());
+
+  // ====== Healthcheck для Render ======
+  app.get("/", (req, res) => {
+    res.send("HairBot is running ✅");
+  });
+
+  // ====== Telegram webhook endpoint ======
+  app.post("/webhook", async (req, res) => {
+    try {
+      const update = req.body;
+      console.log("📩 Update получен");
+
+      if (update.message?.text) {
+        await sendMessage(
+          update.message.chat.id,
+          "Привет! HairBot запущен ✂️"
+        );
+      }
+
+      res.sendStatus(200);
+    } catch (err) {
+      console.error("Ошибка обработки webhook:", err);
+      res.sendStatus(500);
+    }
+  });
+
+  app.listen(PORT, () => {
+    console.log(`✅ Сервер запущен на порту ${PORT}`);
+  });
+
+  console.log("🚀 HairBot успешно запущен");
 }
 
-console.log('✅ Функция startBot экспортирована');
+// ================== HELPERS ==================
+async function sendMessage(chatId, text) {
+  await fetch(`${TELEGRAM_API}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+    }),
+  });
+}
