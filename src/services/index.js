@@ -1,1 +1,8 @@
-export { analyzePhotoWithAI, generateHaircutImage } from './ai-service.js';
+export { 
+  analyzeFaceWithOpenAI, 
+  generateHaircutImage,
+  analyzeColorType,
+  generateTextReport,
+  isOpenAIAvailable,
+  getAIConfigInfo 
+} from './ai-service.js';
