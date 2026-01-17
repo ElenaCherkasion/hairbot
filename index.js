@@ -1,3 +1,5 @@
+console.log("ROOT index.js started", { cwd: process.cwd(), file: "index.js" });
+
 import dotenv from "dotenv";
 dotenv.config();
 
