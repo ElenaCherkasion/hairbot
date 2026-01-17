@@ -44,5 +44,50 @@ export async function startBot() {
     })
   );
 
-  // 2) Health endpoints (Render любит /health)
-  app.get("/", (req, res) => res.status(200).send("HairBot is ru
+  // 2) Health endpoints
+  app.get("/", (req, res) => res.status(200).send("HairBot is running ✅"));
+  app.get("/health", (req, res) =>
+    res
+      .status(200)
+      .json({ ok: true, env: NODE_ENV, time: new Date().toISOString() })
+  );
+
+  // 3) Create Telegraf bot
+  const bot = new Telegraf(TELEGRAM_TOKEN);
+
+  // 4) Register handlers
+  startHandler(bot);
+  callbackHandler(bot);
+  photoHandler(bot);
+  tariffsHandler(bot); // можно удалить если не нужен
+
+  // 5) Webhook endpoint
+  app.post(WEBHOOK_PATH, async (req, res) => {
+    try {
+      // (опционально) секретный токен от Telegram
+      if (WEBHOOK_SECRET) {
+        const secretHeader = req.get("X-Telegram-Bot-Api-Secret-Token");
+        if (secretHeader !== WEBHOOK_SECRET) {
+          return res.status(403).send("Forbidden");
+        }
+      }
+
+      // Telegraf обработает update
+      await bot.handleUpdate(req.body);
+
+      // важно: явно отвечаем Telegram 200 OK
+      return res.sendStatus(200);
+    } catch (err) {
+      console.error("❌ Webhook handler error:", err);
+      return res.sendStatus(500);
+    }
+  });
+
+  // 6) Start server
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log("✅ LISTENING on", PORT);
+    console.log("✅ WEBHOOK_PATH:", WEBHOOK_PATH);
+  });
+
+  console.log("🚀 HairBot started");
+}
