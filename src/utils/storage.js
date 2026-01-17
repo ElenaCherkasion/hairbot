@@ -1,30 +1,39 @@
 // src/utils/storage.js
 import crypto from "crypto";
-import textTemplates from "./text-templates.js";
+import textTemplates, { DOC_VERSIONS } from "./text-templates.js";
 
-const paidUsers = new Set();
-const deletedUsers = new Set();
+const store = new Map(); // userId -> state
 
-const consents = new Map(); 
-// userId -> { pd: {version, hash, acceptedAt}, third: {version, hash, acceptedAt} }
+function defaultState() {
+  return {
+    step: "idle",
+    plan: null, // free|pro|premium
+    paid: false,
+    deleted: false,
 
-export function markPaid(userId) {
-  paidUsers.add(userId);
+    consentPd: false,
+    consentThird: false,
+    consentPdAt: null,
+    consentThirdAt: null,
+    consentPdVersion: null,
+    consentThirdVersion: null,
+    consentPdHash: null,
+    consentThirdHash: null,
+
+    lastPhotoMeta: null,
+  };
 }
 
-export function isPaid(userId) {
-  return paidUsers.has(userId);
+export function getState(userId) {
+  return store.get(userId) || defaultState();
 }
 
-export function markDeleted(userId) {
-  deletedUsers.add(userId);
-  // при удалении: снимаем оплату/согласия
-  paidUsers.delete(userId);
-  consents.delete(userId);
+export function setState(userId, patch) {
+  store.set(userId, { ...getState(userId), ...patch });
 }
 
-export function isDeleted(userId) {
-  return deletedUsers.has(userId);
+export function resetUserData(userId) {
+  store.set(userId, { ...defaultState(), deleted: true });
 }
 
 function sha256(text) {
@@ -32,22 +41,22 @@ function sha256(text) {
 }
 
 export function acceptAllConsents(userId) {
-  const acceptedAt = new Date().toISOString();
-
-  const pdHash = sha256(textTemplates.docs.consentPd.fullText);
-  const thirdHash = sha256(textTemplates.docs.consentThird.fullText);
-
-  consents.set(userId, {
-    pd: { version: textTemplates.docs.consentPd.version, hash: pdHash, acceptedAt },
-    third: { version: textTemplates.docs.consentThird.version, hash: thirdHash, acceptedAt },
+  const now = new Date().toISOString();
+  setState(userId, {
+    consentPd: true,
+    consentThird: true,
+    consentPdAt: now,
+    consentThirdAt: now,
+    consentPdVersion: DOC_VERSIONS.consent_pd,
+    consentThirdVersion: DOC_VERSIONS.consent_third,
+    consentPdHash: sha256(textTemplates.docs.consentPd),
+    consentThirdHash: sha256(textTemplates.docs.consentThird),
+    step: "awaiting_photo",
+    deleted: false,
   });
 }
 
-export function getConsents(userId) {
-  return consents.get(userId) || null;
-}
-
-export function hasRequiredConsents(userId) {
-  const c = consents.get(userId);
-  return Boolean(c?.pd?.acceptedAt && c?.third?.acceptedAt);
+export function canAcceptPhoto(userId) {
+  const st = getState(userId);
+  return st.paid && st.consentPd && st.consentThird && !st.deleted;
 }
