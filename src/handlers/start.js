@@ -1,5 +1,4 @@
-// Было: import { отправитьСообщение } from '../../utils/telegram-api.js';
-// Стало:
 import { отправитьСообщение } from '../../../utils/telegram-api.js';
-// Или если utils в корне:
-import { отправитьСообщение } from '../../../../utils/telegram-api.js';
+// ../../ = выйти из handlers в src
+// ../ = выйти из src в hairbot
+// utils/telegram-api.js = войти в utils
