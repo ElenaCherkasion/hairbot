@@ -2,8 +2,8 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import express from 'express';
-import { КОНФИГ, проверитьКонфигурацию } from './config.js';
-import { logger } from './utils/logger.js';
+import { КОНФИГ, проверитьКонфигурацию } from './src/config.js';
+import { logger } from './src/utils/logger.js';
 
 // ================== ИНИЦИАЛИЗАЦИЯ ==================
 console.log('🤖 Запуск HAIRbot...');
@@ -24,7 +24,7 @@ const приложение = express();
 // ================== ПОДКЛЮЧЕНИЕ БАЗЫ ДАННЫХ ==================
 let базаДанныхГотова = false;
 try {
-  const { testDatabaseConnection } = await import('./database/connection.js');
+  const { testDatabaseConnection } = await import('./src/database/connection.js');
   базаДанныхГотова = await testDatabaseConnection();
   
   if (базаДанныхГотова) {
@@ -39,7 +39,7 @@ try {
 // ================== ИНИЦИАЛИЗАЦИЯ OPENAI ==================
 let openaiДоступен = false;
 try {
-  const { isOpenAIAvailable } = await import('./services/ai-service.js');
+  const { isOpenAIAvailable } = await import('./src/services/ai-service.js');
   openaiДоступен = isOpenAIAvailable();
   
   if (openaiДоступен) {
@@ -78,7 +78,7 @@ import {
   ответитьНаCallback,
   получитьФайлТелеграм,
   проверитьТокенБота 
-} from './utils/telegram-api.js';
+} from './src/utils/telegram-api.js';
 
 // ================== ИМПОРТ ОБРАБОТЧИКОВ ==================
 import { 
@@ -86,12 +86,12 @@ import {
   handlePhoto,
   handleCallback,
   handleTariffSelection 
-} from './handlers/index.js';
+} from './src/handlers/index.js';
 
 // ================== ОБРАБОТКА ОБНОВЛЕНИЙ TELEGRAM ==================
 async function обработкаОбновления(update) {
   if (КОНФИГ.РЕЖИМ_ОТЛАДКИ) {
-    console.log('📨 Полчен обновление:', update.update_id);
+    console.log('📨 Получено обновление:', update.update_id);
   }
   
   try {
