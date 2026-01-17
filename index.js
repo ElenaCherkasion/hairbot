@@ -2,8 +2,8 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import express from 'express';
-import { КОНФИГ, проверитьКонфигурацию } from './src/config.js';
-import { logger } from './src/utils/logger.js';
+import { КОНФИГ, проверитьКонфигурацию } from './config.js';
+import { logger } from './utils/logger.js';
 
 // ================== ИНИЦИАЛИЗАЦИЯ ==================
 console.log('🤖 Запуск HAIRbot...');
@@ -24,7 +24,7 @@ const приложение = express();
 // ================== ПОДКЛЮЧЕНИЕ БАЗЫ ДАННЫХ ==================
 let базаДанныхГотова = false;
 try {
-  const { testDatabaseConnection } = await import('./src/database/connection.js');
+  const { testDatabaseConnection } = await import('./database/connection.js');
   базаДанныхГотова = await testDatabaseConnection();
   
   if (базаДанныхГотова) {
@@ -39,7 +39,7 @@ try {
 // ================== ИНИЦИАЛИЗАЦИЯ OPENAI ==================
 let openaiДоступен = false;
 try {
-  const { isOpenAIAvailable } = await import('./src/services/ai-service.js');
+  const { isOpenAIAvailable } = await import('./services/ai-service.js');
   openaiДоступен = isOpenAIAvailable();
   
   if (openaiДоступен) {
@@ -78,7 +78,7 @@ import {
   ответитьНаCallback,
   получитьФайлТелеграм,
   проверитьТокенБота 
-} from './src/utils/telegram-api.js';
+} from './utils/telegram-api.js';
 
 // ================== ИМПОРТ ОБРАБОТЧИКОВ ==================
 import { 
@@ -86,12 +86,12 @@ import {
   handlePhoto,
   handleCallback,
   handleTariffSelection 
-} from './src/handlers/index.js';
+} from './handlers/index.js';
 
 // ================== ОБРАБОТКА ОБНОВЛЕНИЙ TELEGRAM ==================
 async function обработкаОбновления(update) {
   if (КОНФИГ.РЕЖИМ_ОТЛАДКИ) {
-    console.log('📨 Получено обновление:', update.update_id);
+    console.log('📨 Полчен обновление:', update.update_id);
   }
   
   try {
@@ -253,7 +253,7 @@ async function обработкаОбновления(update) {
         
         <div>
           <a href="/health" class="btn">🩺 Проверить статус</a>
-          <a href="https://t.me/${КОНФИГ.ТОКЕН_ТЕЛЕГРАМ.split(':')[0]}" class="btn" target="_blank">🚀 Начать в Telegram</a>
+          <a href="https://t.me/${КОНФИГ.ТОКЕН_ТЕЛЕГРАМ?.split(':')[0] || 'bot'}" class="btn" target="_blank">🚀 Начать в Telegram</a>
         </div>
         
         <div class="footer">
@@ -339,7 +339,7 @@ const server = приложение.listen(КОНФИГ.ПОРТ, () => {
 🎉 HAIRbot запущен!
 📍 Порт: ${КОНФИГ.ПОРТ}
 🌐 Режим: ${КОНФИГ.ОКРУЖЕНИЕ}
-🤖 Бот: https://t.me/${КОНФИГ.ТОКЕН_ТЕЛЕГРАМ.split(':')[0]}
+🤖 Бот: https://t.me/${КОНФИГ.ТОКЕН_ТЕЛЕГРАМ?.split(':')[0] || 'не настроен'}
 📧 Поддержка: ${КОНФИГ.ПОЧТА_ПОДДЕРЖКИ}
 🌐 Веб-сайт: http://localhost:${КОНФИГ.ПОРТ}/
 🔒 Политика: http://localhost:${КОНФИГ.ПОРТ}/privacy
