@@ -1,24 +1,199 @@
-# Dependencies
+# ==================== ОКРУЖЕНИЕ ====================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.*.local
+
+# ==================== ЗАВИСИМОСТИ ====================
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 
-# Environment variables
-.env
-.env.local
-.env.production
-
-# Runtime data
-*.log
+# ==================== ЛОГИ ====================
 logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
 
-# OS files
-.DS_Store
-Thumbs.db
+# ==================== ТЕСТЫ ====================
+coverage/
+.nyc_output
+.istanbul
+*.lcov
+jest-coverage/
+__tests__/__snapshots__/
 
-# IDE files
+# ==================== IDE ====================
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.DS_Store
+._*
+
+# ==================== ОС ====================
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+
+# ==================== ВРЕМЕННЫЕ ФАЙЛЫ ====================
+tmp/
+temp/
+*.tmp
+*.temp
+*.pid
+*.seed
+*.pid.lock
+
+# ==================== БАЗЫ ДАННЫХ ====================
+*.db
+*.sqlite
+*.sqlite3
+dump.rdb
+redis-data/
+mongodb-data/
+
+# ==================== БЭКАПЫ ====================
+backups/
+*.backup
+*.dump
+*.bak
+
+# ==================== ЗАГРУЖАЕМЫЕ ФАЙЛЫ ====================
+uploads/
+user_photos/
+downloads/
+static/uploads/
+
+# ==================== СБОРКИ ====================
+dist/
+build/
+.out/
+.next/
+.nuxt/
+.cache/
+
+# ==================== СЕРТИФИКАТЫ ====================
+*.pem
+*.crt
+*.key
+*.csr
+*.pfx
+*.p12
+
+# ==================== DOCKER ====================
+.dockerignore
+Dockerfile
+docker-compose.yml
+docker-compose.*.yml
+
+# ==================== ОПЕРАЦИОННЫЕ СИСТЕМЫ ====================
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+._*
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.com.apple.timemachine.supported
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+[Tt]humbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+
+# Windows Installer files
+*.cab
+*.msi
+*.msm
+*.msp
+
+# Windows shortcuts
+*.lnk
+
+# ==================== РАЗНОЕ ====================
+*.tgz
+*.tar.gz
+*.zip
+*.rar
+*.7z
+*.gz
+*.bz2
+*.xz
+*.iso
+*.dmg
+
+# ESLint cache
+.eslintcache
+
+# Преттиер кэш
+.prettiercache
+
+# Экранированные файлы
+\#*#
+.#*
+
+# Случайные файлы
+*_flymake.*
+*_flymake
+
+# Файлы конфигурации редакторов
+.project
+.settings/
+
+# Типы файлов, которые не должны быть в репозитории
+*.sublime-workspace
+*.sublime-project
+
+# JetBrains IDE
+*.iml
+*.ipr
+*.iws
+
+# Visual Studio Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+
+# Локальная история для редакторов
+.history
