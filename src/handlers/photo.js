@@ -1,8 +1,4 @@
-import { 
-  отправитьСообщение, 
-  получитьФайлТелеграм, 
-  отправитьДействие 
-} from '../../../utils/telegram-api.js';
+import { отправитьСообщение, получитьФайлТелеграм } from '../utils/telegram-api.js';
 import { getProcessingText, getResultText, getErrorText } from '../utils/text-templates.js';
 import { getBackKeyboard } from '../keyboards/main.js';
 import { analyzeFaceWithOpenAI } from '../services/ai-service.js';
