@@ -2,55 +2,45 @@
 import winston from 'winston';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Создаем директорию для логов
-const logDir = 'logs';
+const logDir = path.join(__dirname, '../../logs');
 if (!fs.existsSync(logDir)) {
   fs.mkdirSync(logDir, { recursive: true });
 }
 
-// Формат для консоли
-const consoleFormat = winston.format.combine(
-  winston.format.colorize(),
-  winston.format.timestamp({ format: 'HH:mm:ss' }),
-  winston.format.printf(({ timestamp, level, message }) => {
-    return `${timestamp} [${level}]: ${message}`;
-  })
-);
-
-// Формат для файлов
-const fileFormat = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-  winston.format.json()
-);
-
-// Создаем логгер
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
+  format: winston.format.combine(
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    winston.format.errors({ stack: true }),
+    winston.format.splat(),
+    winston.format.json()
+  ),
+  defaultMeta: { service: 'hairbot' },
   transports: [
-    // Консоль
-    new winston.transports.Console({
-      format: consoleFormat
+    new winston.transports.File({ 
+      filename: path.join(logDir, 'error.log'), 
+      level: 'error' 
     }),
-    // Файл с ошибками
-    new winston.transports.File({
-      filename: path.join(logDir, 'error.log'),
-      level: 'error',
-      format: fileFormat,
-      maxsize: 5242880, // 5MB
-      maxFiles: 5
-    }),
-    // Общий лог файл
-    new winston.transports.File({
-      filename: path.join(logDir, 'app.log'),
-      format: fileFormat,
-      maxsize: 5242880,
-      maxFiles: 10
+    new winston.transports.File({ 
+      filename: path.join(logDir, 'combined.log') 
     })
   ]
 });
 
-// Тестовое сообщение
-logger.info('Логгер инициализирован');
+// В development добавляем консольный вывод
+if (process.env.NODE_ENV !== 'production') {
+  logger.add(new winston.transports.Console({
+    format: winston.format.combine(
+      winston.format.colorize(),
+      winston.format.simple()
+    )
+  }));
+}
 
 export default logger;
