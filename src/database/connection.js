@@ -1,54 +1,28 @@
-import mysql from 'mysql2/promise';
-import dotenv from 'dotenv';
+// src/database/connection.js
+import { Sequelize } from 'sequelize';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-let pool = null;
+const databaseUrl = process.env.DATABASE_URL || 'sqlite://./database/hairbot.db';
 
-export async function getDatabaseConnection() {
-  if (!pool) {
-    const config = {
-      host: process.env.DB_HOST || 'localhost',
-      port: process.env.DB_PORT || 3306,
-      user: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '',
-      database: process.env.DB_NAME || 'hairbot',
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-      enableKeepAlive: true,
-      keepAliveInitialDelay: 0
-    };
-
-    // Если есть DATABASE_URL (для PostgreSQL на Render), используем его
-    if (process.env.DATABASE_URL) {
-      pool = mysql.createPool(process.env.DATABASE_URL);
-    } else {
-      pool = mysql.createPool(config);
-    }
-    
-    console.log('✅ Подключение к базе данных установлено');
+const sequelize = new Sequelize(databaseUrl, {
+  dialect: databaseUrl.includes('sqlite') ? 'sqlite' : 'mysql',
+  storage: databaseUrl.includes('sqlite') ? path.join(__dirname, 'hairbot.db') : undefined,
+  logging: process.env.NODE_ENV === 'development' ? console.log : false,
+  pool: {
+    max: 5,
+    min: 0,
+    acquire: 30000,
+    idle: 10000
   }
-  
-  return pool;
-}
+});
 
-export async function testDatabaseConnection() {
-  try {
-    const connection = await getDatabaseConnection();
-    await connection.query('SELECT 1');
-    console.log('✅ Тест подключения к БД: УСПЕХ');
-    return true;
-  } catch (error) {
-    console.error('❌ Ошибка подключения к БД:', error.message);
-    return false;
-  }
-}
+// Тестовое подключение
+sequelize.authenticate()
+  .then(() => console.log('✅ База данных подключена'))
+  .catch(err => console.error('❌ Ошибка подключения к БД:', err.message));
 
-// Закрытие соединения при завершении приложения
-export async function closeDatabaseConnection() {
-  if (pool) {
-    await pool.end();
-    console.log('✅ Соединение с БД закрыто');
-  }
-}
+export { sequelize };
