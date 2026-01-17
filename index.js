@@ -117,18 +117,38 @@ async function main() {
 
   try {
     // Импортируем основной модуль
+    console.log('📦 Импортируем src/index.js...');
     const appModule = await import('./index.js');
     
-    // Проверяем экспорты
-    if (typeof appModule.startBot === 'function') {
-      console.log('✅ Найдена функция startBot, запускаем...');
-      await appModule.startBot();
-    } else if (typeof appModule.default === 'function') {
-      console.log('✅ Найдена default функция, запускаем...');
-      await appModule.default();
+    // ДЕБАГ: покажем что импортировалось
+    console.log('🔍 Доступные экспорты:', Object.keys(appModule));
+    
+    // Ищем функцию запуска
+    const startFunction = appModule.startBot;
+    
+    if (typeof startFunction === 'function') {
+      console.log('✅ Функция startBot найдена!');
+      console.log('🚀 Запускаем бота...\n');
+      await startFunction();
     } else {
-      console.error('❌ В src/index.js не экспортирована функция запуска!');
-      console.error('   Добавьте в конец файла: export async function startBot() { ... }');
+      console.error('❌ ОШИБКА: startBot не является функцией!');
+      console.error('Тип startBot:', typeof startFunction);
+      console.error('Все экспорты:', appModule);
+      
+      // Попробуем найти любую функцию
+      const allExports = Object.keys(appModule);
+      for (const exportName of allExports) {
+        if (typeof appModule[exportName] === 'function') {
+          console.log(`Найдена функция ${exportName}, пробуем запустить...`);
+          try {
+            await appModule[exportName]();
+            return;
+          } catch (error) {
+            console.error(`Функция ${exportName} завершилась с ошибкой:`, error.message);
+          }
+        }
+      }
+      
       process.exit(1);
     }
     
@@ -162,7 +182,7 @@ async function main() {
     if (error.code === 'ERR_MODULE_NOT_FOUND') {
       console.error('   Тип: MODULE_NOT_FOUND (модуль не найден)');
       
-      // Пытаемся найти какой модуль отсутствует
+      // Извлекаем путь из сообщения об ошибке
       const match = error.message.match(/Cannot find module '([^']+)'/);
       if (match) {
         const missingModule = match[1];
@@ -181,6 +201,8 @@ async function main() {
       console.error('   💡 Проблема с базой данных. Проверьте DATABASE_URL');
     } else if (error.message.includes('token')) {
       console.error('   💡 Проблема с токеном бота. Проверьте TELEGRAM_TOKEN');
+    } else if (error.message.includes('startBot')) {
+      console.error('   💡 Проблема с функцией startBot. Проверьте что она правильно экспортируется');
     }
     
     console.error('\n🔧 Stack trace для отладки:');
