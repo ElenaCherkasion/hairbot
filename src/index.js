@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // src/index.js - ОСНОВНОЙ КОД БОТА
 
 import { Telegraf, session } from 'telegraf';
@@ -32,65 +33,18 @@ if (missingVars.length > 0) {
   process.exit(1);
 }
 
-// Инициализация бота
+// Инициализация бота (используем let, чтобы можно было переопределить если нужно)
 const botToken = process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_TOKEN;
-const bot = new Telegraf(botToken);
-
-// Настройка сессии
-bot.use(session());
-
-// Middleware для логирования
-bot.use(async (ctx, next) => {
-  const startTime = Date.now();
-  const userId = ctx.from?.id;
-  const username = ctx.from?.username;
-  const messageType = ctx.message?.photo ? 'photo' : 
-                     ctx.message?.text ? 'text' : 
-                     ctx.callbackQuery ? 'callback' : 
-                     'unknown';
-
-  logger.info(`📨 ${messageType} от @${username || userId} (ID: ${userId})`);
-
-  try {
-    await next();
-  } catch (error) {
-    logger.error(`❌ Ошибка обработки: ${error.message}`);
-    
-    try {
-      await ctx.reply('Произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте позже или обратитесь в поддержку.');
-    } catch (replyError) {
-      logger.error(`❌ Не удалось отправить сообщение об ошибке: ${replyError.message}`);
-    }
-  } finally {
-    const processingTime = Date.now() - startTime;
-    logger.debug(`⏱️  Время обработки: ${processingTime}ms`);
-  }
-});
-
-// Регистрация обработчиков
-startHandler(bot);
-photoHandler(bot);
-tariffsHandler(bot);
-callbackHandler(bot);
-
-// Обработка ошибок бота
-bot.catch((error, ctx) => {
-  logger.error(`🚨 Ошибка Telegraf: ${error.message}`);
-  logger.error(error.stack);
-  
-  try {
-    ctx.reply('Произошла внутренняя ошибка бота. Мы уже работаем над её устранением.');
-  } catch (replyError) {
-    logger.error(`❌ Не удалось отправить сообщение об ошибке: ${replyError.message}`);
-  }
-});
+let bot;
 
 // Инициализация Express приложения для вебхуков
 const app = express();
 
+// ================ КОНФИГУРАЦИЯ ================
+
 // Middleware для безопасности
 app.use(helmet({
-  contentSecurityPolicy: false // Можно настроить позже
+  contentSecurityPolicy: false
 }));
 
 app.use(cors());
@@ -108,6 +62,8 @@ const apiLimiter = rateLimit({
 });
 
 app.use('/api/', apiLimiter);
+
+// ================ HEALTH CHECK ================
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
@@ -127,12 +83,14 @@ app.get('/health', async (req, res) => {
     health.database = 'connected';
     
     // Проверка бота
-    const botInfo = await bot.telegram.getMe();
-    health.bot = {
-      id: botInfo.id,
-      username: botInfo.username,
-      firstName: botInfo.first_name
-    };
+    if (bot) {
+      const botInfo = await bot.telegram.getMe();
+      health.bot = {
+        id: botInfo.id,
+        username: botInfo.username,
+        firstName: botInfo.first_name
+      };
+    }
     
     res.json(health);
   } catch (error) {
@@ -142,6 +100,8 @@ app.get('/health', async (req, res) => {
     res.status(503).json(health);
   }
 });
+
+// ================ СТАТИСТИКА ================
 
 // Статистика
 app.get('/api/stats', async (req, res) => {
@@ -189,14 +149,23 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
-// Webhook endpoint
-app.post(`/webhook/${botToken}`, (req, res) => {
-  logger.info(`Webhook получен: ${req.body?.update_id || 'unknown'}`);
-  bot.handleUpdate(req.body, res).catch(error => {
-    logger.error(`Ошибка обработки webhook: ${error.message}`);
-    res.status(500).send('Internal Server Error');
-  });
+// ================ WEBHOOK ENDPOINT ================
+
+// Webhook endpoint (будет настроен позже)
+app.post('/webhook/:token', (req, res) => {
+  const { token } = req.params;
+  if (token === botToken && bot) {
+    logger.info(`Webhook получен: ${req.body?.update_id || 'unknown'}`);
+    bot.handleUpdate(req.body, res).catch(error => {
+      logger.error(`Ошибка обработки webhook: ${error.message}`);
+      res.status(500).send('Internal Server Error');
+    });
+  } else {
+    res.status(403).send('Forbidden');
+  }
 });
+
+// ================ ОБРАБОТКА ОШИБОК ================
 
 // Обработка 404
 app.use((req, res) => {
@@ -214,50 +183,106 @@ app.use((error, req, res, next) => {
   });
 });
 
-// Главная функция запуска бота
+// ================ ГЛАВНАЯ ФУНКЦИЯ ЗАПУСКА БОТА ================
+
 export async function startBot() {
   try {
     logger.info('🚀 Запуск HairBot...');
     
-    // Проверка подключения к базе данных
+    // 1. Проверка подключения к базе данных
     await sequelize.authenticate();
     logger.info('✅ Подключение к базе данных установлено');
     
-    // Синхронизация моделей (только в development)
+    // 2. Синхронизация моделей (только в development)
     if (process.env.NODE_ENV === 'development') {
       await sequelize.sync({ alter: true });
       logger.info('✅ Модели базы данных синхронизированы');
     }
     
-    // Получение информации о боте
+    // 3. Инициализация бота (если еще не инициализирован)
+    if (!bot) {
+      bot = new Telegraf(botToken);
+      
+      // Настройка сессии
+      bot.use(session());
+
+      // Middleware для логирования
+      bot.use(async (ctx, next) => {
+        const startTime = Date.now();
+        const userId = ctx.from?.id;
+        const username = ctx.from?.username;
+        const messageType = ctx.message?.photo ? 'photo' : 
+                          ctx.message?.text ? 'text' : 
+                          ctx.callbackQuery ? 'callback' : 
+                          'unknown';
+
+        logger.info(`📨 ${messageType} от @${username || userId} (ID: ${userId})`);
+
+        try {
+          await next();
+        } catch (error) {
+          logger.error(`❌ Ошибка обработки: ${error.message}`);
+          
+          try {
+            await ctx.reply('Произошла ошибка при обработке вашего запроса. Пожалуйста, попробуйте позже или обратитесь в поддержку.');
+          } catch (replyError) {
+            logger.error(`❌ Не удалось отправить сообщение об ошибке: ${replyError.message}`);
+          }
+        } finally {
+          const processingTime = Date.now() - startTime;
+          logger.debug(`⏱️  Время обработки: ${processingTime}ms`);
+        }
+      });
+
+      // Регистрация обработчиков
+      startHandler(bot);
+      photoHandler(bot);
+      tariffsHandler(bot);
+      callbackHandler(bot);
+
+      // Обработка ошибок бота
+      bot.catch((error, ctx) => {
+        logger.error(`🚨 Ошибка Telegraf: ${error.message}`);
+        logger.error(error.stack);
+        
+        try {
+          ctx.reply('Произошла внутренняя ошибка бота. Мы уже работаем над её устранением.');
+        } catch (replyError) {
+          logger.error(`❌ Не удалось отправить сообщение об ошибке: ${replyError.message}`);
+        }
+      });
+    }
+    
+    // 4. Получение информации о боте
     const botInfo = await bot.telegram.getMe();
     const botId = botInfo.id;
     logger.info(`🤖 Бот: @${botInfo.username} (ID: ${botId})`);
     
-    // Определение режима запуска
+    // 5. Определение режима запуска
     const isProduction = process.env.NODE_ENV === 'production';
     const hasWebhookUrl = process.env.WEBHOOK_URL;
     const PORT = process.env.PORT || 3000;
     
+    // 6. Запуск Express сервера
+    app.listen(PORT, () => {
+      logger.info(`🚀 Express сервер запущен на порту ${PORT}`);
+      logger.info(`📊 Health check: http://localhost:${PORT}/health`);
+      logger.info(`📈 Статистика: http://localhost:${PORT}/api/stats`);
+      if (hasWebhookUrl) {
+        logger.info(`🔗 Webhook endpoint: http://localhost:${PORT}/webhook/${botToken}`);
+      }
+    });
+    
+    // 7. Настройка режима работы бота
     if (isProduction && hasWebhookUrl) {
       // Режим вебхука для продакшена
       logger.info(`🌐 Режим: Webhook (Production)`);
       logger.info(`🔗 Webhook URL: ${process.env.WEBHOOK_URL}`);
       
       await setupWebhook(bot, process.env.WEBHOOK_URL);
-      
-      app.listen(PORT, () => {
-        logger.info(`🚀 Сервер запущен на порту ${PORT}`);
-        logger.info(`📊 Health check: http://localhost:${PORT}/health`);
-        logger.info(`📈 Статистика: http://localhost:${PORT}/api/stats`);
-      });
     } else {
       // Режим polling для разработки
       logger.info(`🌐 Режим: Polling (${isProduction ? 'Production' : 'Development'})`);
-      
-      app.listen(PORT, () => {
-        logger.info(`🚀 Express сервер запущен на порту ${PORT}`);
-      });
       
       // Запуск бота в режиме polling
       bot.launch({
@@ -268,19 +293,24 @@ export async function startBot() {
       logger.info('🔄 Бот запущен в режиме polling');
     }
     
-    // Graceful shutdown
+    // 8. Graceful shutdown
     process.once('SIGINT', () => {
       logger.info('🛑 Получен SIGINT. Остановка бота...');
-      bot.stop('SIGINT');
+      if (bot) {
+        bot.stop('SIGINT');
+      }
       process.exit(0);
     });
     
     process.once('SIGTERM', () => {
       logger.info('🛑 Получен SIGTERM. Остановка бота...');
-      bot.stop('SIGTERM');
+      if (bot) {
+        bot.stop('SIGTERM');
+      }
       process.exit(0);
     });
     
+    // 9. Успешный запуск
     logger.info('✅ HairBot успешно запущен и готов к работе!');
     
     return { bot, app, sequelize };
@@ -292,8 +322,9 @@ export async function startBot() {
   }
 }
 
-// Если файл запущен напрямую (не через импорт)
+// Если файл запущен напрямую (например, для тестирования)
 if (import.meta.url === `file://${process.argv[1]}`) {
+  console.log('🔧 Прямой запуск src/index.js');
   startBot().catch(error => {
     console.error('Критическая ошибка при запуске:', error);
     process.exit(1);
