@@ -1,41 +1,29 @@
-import { отправитьСообщение, получитьФайлТелеграм } from '../utils/telegram-api.js';
-import { getProcessingText, getResultText, getErrorText } from '../utils/text-templates.js';
-import { getBackKeyboard } from '../keyboards/main.js';
-import { analyzeFaceWithOpenAI } from '../services/ai-service.js';
+// src/handlers/photo.js
+import textTemplates from '../utils/text-templates.js';
 
-export async function handlePhoto(userId, chatId, photoInfo, tariff = 'free') {
-  try {
-    // Сообщаем, что бот "печатает"
-    await отправитьДействие(chatId, 'upload_photo');
+export default function photoHandler(bot) {
+  bot.on('photo', async (ctx) => {
+    const userId = ctx.from.id;
     
-    // Получаем URL фото
-    const photoUrl = await получитьФайлТелеграм(photoInfo.file_id);
-    console.log(`📸 Получено фото от ${userId}, URL: ${photoUrl.substring(0, 50)}...`);
+    console.log(`📸 Фото от пользователя ${userId}`);
     
-    // Отправляем сообщение о начале обработки
-    await отправитьСообщение(chatId, getProcessingText(tariff), getBackKeyboard());
-    
-    // Анализ через OpenAI
-    const aiResult = await analyzeFaceWithOpenAI(photoUrl, tariff);
-    
-    if (!aiResult.success && !aiResult.is_test_data) {
-      throw new Error('Ошибка анализа: ' + aiResult.error);
-    }
-    
-    // Отправляем результат
-    const resultText = getResultText(aiResult.data, tariff);
-    await отправитьСообщение(chatId, resultText, getBackKeyboard());
-    
-    console.log(`✅ Анализ завершен для пользователя ${userId}, тариф: ${tariff}`);
-    
-  } catch (error) {
-    console.error('❌ Ошибка обработки фото:', error);
-    
-    // Отправляем сообщение об ошибке
-    await отправитьСообщение(
-      chatId, 
-      getErrorText('general'), 
-      getBackKeyboard()
+    await ctx.reply(
+      '🔄 Анализирую ваше фото...\nЭто займет несколько секунд.',
+      { parse_mode: 'Markdown' }
     );
-  }
+    
+    // Имитация анализа
+    setTimeout(async () => {
+      await ctx.reply(
+        '✅ Анализ завершен!\n\n**Тип лица:** Овальное\n**Рекомендации:**\n• Стрижки с объемом на макушке\n• Асимметричные стрижки\n• Каре с челкой\n\n💡 Для получения полного анализа выберите тариф!',
+        { parse_mode: 'Markdown' }
+      );
+      
+      await ctx.reply(textTemplates.tariffs, { parse_mode: 'Markdown' });
+    }, 2000);
+  });
+
+  bot.command('photo', (ctx) => {
+    ctx.reply(textTemplates.photoInstructions, { parse_mode: 'Markdown' });
+  });
 }
