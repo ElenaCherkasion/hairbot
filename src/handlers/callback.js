@@ -1,16 +1,9 @@
 // src/handlers/callback.js
 import textTemplates from "../utils/text-templates.js";
 import { mainMenuKeyboard } from "../keyboards/main.js";
-import { getState, setState, resetUserState, deleteUserDataFromDB } from "../utils/storage.js";
+import { getState, setState, resetUserData, deleteUserDataFromDB } from "../utils/storage.js";
 import { sendSupportEmail } from "../utils/mailer.js";
 
-// ⚠️ TODO: подключи pool так, как у тебя в проекте.
-// Вариант 1: если у тебя pool экспортируется из db.js:
-// import { pool } from "../utils/db.js";
-//
-// Вариант 2: если pool в index.js — передавай его в callbackHandler(bot, pool)
-//
-// Я сделаю универсально: callbackHandler(bot, pool)
 export default function callbackHandler(bot, pool) {
   // ====== ловим текст после "Поддержка" / "Сообщить об ошибке" ======
   bot.on("text", async (ctx) => {
@@ -27,7 +20,11 @@ export default function callbackHandler(bot, pool) {
       const subject = `HAIRbot Support | user_id=${userId}`;
       const text = `User ID: ${userId}\n\nMessage:\n${msgText}`;
 
-      await sendSupportEmail({ subject, text });
+      try {
+        await sendSupportEmail({ subject, text });
+      } catch (e) {
+        console.warn("⚠️ sendSupportEmail failed:", e?.message || e);
+      }
 
       await ctx.reply("✅ Спасибо! Сообщение отправлено в поддержку.", mainMenuKeyboard());
       return;
@@ -40,7 +37,11 @@ export default function callbackHandler(bot, pool) {
       const subject = `HAIRbot Bug Report | user_id=${userId}`;
       const text = `User ID: ${userId}\n\nBug report:\n${msgText}`;
 
-      await sendSupportEmail({ subject, text });
+      try {
+        await sendSupportEmail({ subject, text });
+      } catch (e) {
+        console.warn("⚠️ sendSupportEmail failed:", e?.message || e);
+      }
 
       await ctx.reply("✅ Спасибо! Ошибка отправлена разработчику.", mainMenuKeyboard());
       return;
@@ -67,22 +68,28 @@ export default function callbackHandler(bot, pool) {
       }
     };
 
-    // ====== MENU_HOME (если где-то используется backToMenuKeyboard) ======
+    // ====== MENU_HOME (на случай, если где-то используется backToMenuKeyboard) ======
     if (data === "MENU_HOME") {
       await safeEditMenu("Меню:", mainMenuKeyboard());
       return;
     }
 
-    // ====== ТАРИФЫ (логически в меню) ======
+    // ====== ТАРИФЫ (выделены в главном меню) ======
     if (data === "MENU_TARIFF_FREE") {
+      // при желании можно сохранять выбор в state:
+      setState(userId, { plan: "free" });
       await safeEditMenu(textTemplates.tariffFree);
       return;
     }
+
     if (data === "MENU_TARIFF_PRO") {
+      setState(userId, { plan: "pro" });
       await safeEditMenu(textTemplates.tariffPro);
       return;
     }
+
     if (data === "MENU_TARIFF_PREMIUM") {
+      setState(userId, { plan: "premium" });
       await safeEditMenu(textTemplates.tariffPremium);
       return;
     }
@@ -99,7 +106,7 @@ export default function callbackHandler(bot, pool) {
       return;
     }
 
-    // ====== PRIVACY (фикс: чтобы открывалось) ======
+    // ====== PRIVACY (чтобы открывалось из главного меню) ======
     if (data === "MENU_PRIVACY") {
       await safeEditMenu(textTemplates.privacy);
       return;
@@ -137,6 +144,8 @@ export default function callbackHandler(bot, pool) {
           ],
         },
       };
+
+      // Сначала показываем какие данные используются + последствия
       await safeEditMenu(textTemplates.deleteIntro, deleteConfirmKeyboard);
       return;
     }
@@ -149,16 +158,22 @@ export default function callbackHandler(bot, pool) {
     if (data === "DELETE_CONFIRM") {
       // 1) удаляем из БД автоматически
       if (pool) {
-        await deleteUserDataFromDB(pool, userId);
+        try {
+          await deleteUserDataFromDB(pool, userId);
+        } catch (e) {
+          console.warn("⚠️ deleteUserDataFromDB failed:", e?.message || e);
+        }
       } else {
         console.warn("⚠️ pool не передан в callbackHandler(bot, pool). Удаление из БД пропущено.");
       }
 
-      // 2) сбрасываем локальное состояние
-      resetUserState(userId);
+      // 2) сбрасываем локальные данные (твоя функция)
+      resetUserData(userId);
 
       await safeEditMenu(textTemplates.deleteDone);
       return;
     }
+
+    // неизвестные callback — игнор
   });
 }
