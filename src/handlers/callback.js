@@ -1,8 +1,7 @@
 // src/handlers/callback.js
 import textTemplates from "../utils/text-templates.js";
-import { mainMenuKeyboard, backToMenuKeyboard } from "../keyboards/main.js";
-import { replyLong } from "../utils/reply-long.js";
-import { getState, setState, resetUserData, acceptAllConsents } from "../utils/storage.js";
+import { mainMenuKeyboard } from "../keyboards/main.js";
+import { getState, setState } from "../utils/storage.js";
 
 export default function callbackHandler(bot) {
   // ловим текст после "Сообщить об ошибке"
@@ -11,12 +10,13 @@ export default function callbackHandler(bot) {
     if (!userId) return;
 
     const st = getState(userId);
+
     if (st.step === "wait_error_text") {
       setState(userId, { step: "idle" });
       // TODO: сохранить в БД error_reports
       await ctx.reply(
         "✅ Спасибо! Сообщение об ошибке принято. Мы рассмотрим обращение.",
-        backToMenuKeyboard()
+        mainMenuKeyboard()
       );
     }
   });
@@ -26,183 +26,74 @@ export default function callbackHandler(bot) {
     const data = ctx.callbackQuery?.data;
     if (!userId || !data) return;
 
-    await ctx.answerCbQuery().catch(() => {});
+    await ctx.answerCbQuery();
 
-    // MENU
-    if (data === "MENU_HOME") {
-      await ctx.reply("Главное меню:", mainMenuKeyboard());
-      return;
-    }
+    // helper: иногда editMessageText не срабатывает (например, сообщение уже не редактируется)
+    const safeEdit = async (html) => {
+      try {
+        await ctx.editMessageText(html, {
+          parse_mode: "HTML",
+          ...mainMenuKeyboard(),
+        });
+      } catch (e) {
+        await ctx.reply(html, {
+          parse_mode: "HTML",
+          ...mainMenuKeyboard(),
+        });
+      }
+    };
 
+    // ====== MENU ROUTES ======
     if (data === "MENU_START") {
-      await ctx.reply(textTemplates.tariffs, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "FREE", callback_data: "TARIFF_free" }],
-            [{ text: "PRO", callback_data: "TARIFF_pro" }],
-            [{ text: "PREMIUM", callback_data: "TARIFF_premium" }],
-            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-          ],
-        },
-      });
+      await safeEdit(textTemplates.start);
       return;
     }
 
     if (data === "MENU_TARIFFS") {
-      await ctx.reply(textTemplates.tariffs, backToMenuKeyboard());
+      await safeEdit(textTemplates.tariffs);
+      return;
+    }
+
+    // MENU_WHATSIN = сравнение тарифов
+    if (data === "MENU_WHATSIN") {
+      await safeEdit(textTemplates.tariffsCompare);
+      return;
+    }
+
+    if (data === "MENU_ABOUT") {
+      await safeEdit(textTemplates.about);
       return;
     }
 
     if (data === "MENU_PAYMENTS") {
-      try {
-        await replyLong(ctx, textTemplates.docs.payments, backToMenuKeyboard());
-      } catch (err) {
-        console.error("❌ MENU_PAYMENTS error:", err?.response?.description || err?.message || err);
-        await ctx.reply("Не удалось показать правила оплаты (техническая ошибка).", backToMenuKeyboard());
-      }
+      await safeEdit(textTemplates.payments);
       return;
     }
 
     if (data === "MENU_PRIVACY") {
-      try {
-        await replyLong(ctx, textTemplates.docs.privacy, backToMenuKeyboard());
-      } catch (err) {
-        console.error("❌ MENU_PRIVACY error:", err?.response?.description || err?.message || err);
-        await ctx.reply("Не удалось показать политику (техническая ошибка).", backToMenuKeyboard());
-      }
+      await safeEdit(textTemplates.privacy);
+      return;
+    }
+
+    if (data === "MENU_DELETE") {
+      await safeEdit(textTemplates.deleteData);
       return;
     }
 
     if (data === "MENU_SUPPORT") {
-      await ctx.reply(textTemplates.support, backToMenuKeyboard());
+      await safeEdit(textTemplates.support);
       return;
     }
 
     if (data === "MENU_ERROR") {
       setState(userId, { step: "wait_error_text" });
-      await ctx.reply(textTemplates.errorPrompt, {
-        reply_markup: { inline_keyboard: [[{ text: "⬅️ Отмена", callback_data: "MENU_HOME" }]] },
+      await ctx.reply(textTemplates.error, {
+        parse_mode: "HTML",
+        ...mainMenuKeyboard(),
       });
       return;
     }
 
-    if (data === "MENU_DELETE") {
-      await ctx.reply(textTemplates.deleteWarning, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "🗑 Удалить мои данные", callback_data: "DELETE_STEP1" }],
-            [{ text: "❌ Отмена", callback_data: "MENU_HOME" }],
-          ],
-        },
-      });
-      return;
-    }
-
-    if (data === "DELETE_STEP1") {
-      await ctx.reply("Подтвердите удаление персональных данных. Это действие нельзя отменить.", {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "🔥 Подтвердить удаление", callback_data: "DELETE_CONFIRM" }],
-            [{ text: "❌ Отмена", callback_data: "MENU_HOME" }],
-          ],
-        },
-      });
-      return;
-    }
-
-    if (data === "DELETE_CONFIRM") {
-      resetUserData(userId);
-      await ctx.reply(
-        "✅ Ваши персональные данные удалены. Для повторного использования потребуется новое согласие.",
-        mainMenuKeyboard()
-      );
-      return;
-    }
-
-    // DOCS
-    if (data === "DOC_CONSENT_PD") {
-      try {
-        await replyLong(ctx, textTemplates.docs.consentPd, backToMenuKeyboard());
-      } catch (err) {
-        console.error("❌ DOC_CONSENT_PD error:", err?.response?.description || err?.message || err);
-        await ctx.reply("Не удалось показать документ (техническая ошибка).", backToMenuKeyboard());
-      }
-      return;
-    }
-
-    if (data === "DOC_CONSENT_THIRD") {
-      try {
-        await replyLong(ctx, textTemplates.docs.consentThird, backToMenuKeyboard());
-      } catch (err) {
-        console.error("❌ DOC_CONSENT_THIRD error:", err?.response?.description || err?.message || err);
-        await ctx.reply("Не удалось показать документ (техническая ошибка).", backToMenuKeyboard());
-      }
-      return;
-    }
-
-    // CONSENTS
-    if (data === "CONSENT_DECLINE") {
-      await ctx.reply(
-        "Без согласия я не могу обрабатывать фото и сообщения.\nВы можете вернуться в меню или обратиться в поддержку.",
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "🆘 Поддержка", callback_data: "MENU_SUPPORT" }],
-              [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-            ],
-          },
-        }
-      );
-      return;
-    }
-
-    if (data === "CONSENT_ACCEPT_ALL") {
-      const st = getState(userId);
-      if (!st.paid) {
-        await ctx.reply(
-          "⚠️ Согласие запрашивается после оплаты. Сначала оплатите тариф. (Тест: /pay_ok)",
-          backToMenuKeyboard()
-        );
-        return;
-      }
-      acceptAllConsents(userId);
-      await ctx.reply("✅ Согласия приняты. Теперь пришлите фото лица.", backToMenuKeyboard());
-      return;
-    }
-
-    // TARIFF SELECT
-    if (data.startsWith("TARIFF_")) {
-      const plan = data.replace("TARIFF_", "");
-      if (!["free", "pro", "premium"].includes(plan)) return;
-
-      setState(userId, {
-        plan,
-        paid: false,
-        consentPd: false,
-        consentThird: false,
-        consentPdAt: null,
-        consentThirdAt: null,
-        consentPdVersion: null,
-        consentThirdVersion: null,
-        consentPdHash: null,
-        consentThirdHash: null,
-        step: "awaiting_payment",
-        deleted: false,
-      });
-
-      if (plan === "free") {
-        await ctx.reply("Вы выбрали FREE.\nДля анализа по фото нужен PRO или PREMIUM.", backToMenuKeyboard());
-        return;
-      }
-
-      await ctx.reply(
-        `Вы выбрали ${plan.toUpperCase()}.\n\nДля продолжения оплатите тариф.\n(Тест: /pay_ok)\nПосле оплаты появится окно согласий.`,
-        backToMenuKeyboard()
-      );
-      return;
-    }
-
-    // fallback
-    await ctx.reply("Неизвестное действие. Вернитесь в меню.", mainMenuKeyboard());
+    // Если пришёл неизвестный callback — просто игнорируем/можно логировать
   });
 }
