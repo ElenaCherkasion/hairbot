@@ -1,3 +1,4 @@
+// src/keyboards/main.js
 import { Markup } from "telegraf";
 
 export const mainMenuKeyboard = () =>
