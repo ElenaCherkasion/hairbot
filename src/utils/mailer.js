@@ -1,38 +1,31 @@
 // src/utils/mailer.js
 import nodemailer from "nodemailer";
 
-const SUPPORT_TO = "cherkashina720@gmail.com";
-
-function hasSMTP() {
-  return (
-    process.env.SMTP_HOST &&
-    process.env.SMTP_PORT &&
-    process.env.SMTP_USER &&
-    process.env.SMTP_PASS
-  );
+function mustEnv(name) {
+  const v = (process.env[name] || "").trim();
+  if (!v) throw new Error(`${name} is missing`);
+  return v;
 }
 
 export async function sendSupportEmail({ subject, text }) {
-  if (!hasSMTP()) {
-    console.warn("⚠️ SMTP не настроен. Письмо не отправлено. Проверь env SMTP_*");
-    console.warn("SUBJECT:", subject);
-    console.warn("TEXT:", text);
-    return;
-  }
+  const host = mustEnv("SMTP_HOST");
+  const port = Number(mustEnv("SMTP_PORT"));
+  const secure = String(process.env.SMTP_SECURE || "false") === "true";
+  const user = mustEnv("SMTP_USER");
+  const pass = mustEnv("SMTP_PASS");
+
+  const to = (process.env.SUPPORT_TO_EMAIL || "cherkashina720@gmail.com").trim();
 
   const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT),
-    secure: String(process.env.SMTP_SECURE).toLowerCase() === "true",
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
+    host,
+    port,
+    secure,
+    auth: { user, pass },
   });
 
   await transporter.sendMail({
-    from: process.env.SMTP_USER,
-    to: SUPPORT_TO,
+    from: user,
+    to,
     subject,
     text,
   });
