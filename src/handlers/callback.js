@@ -39,7 +39,11 @@ export default function callbackHandler(bot, pool) {
         return;
       }
       const contact = msgText;
-      setState(userId, { supportContact: contact, supportContactType: "email", step: "support_confirm_contact" });
+      setState(userId, {
+        supportContact: contact,
+        supportContactType: "email",
+        step: "support_confirm_contact",
+      });
 
       await ctx.reply(textTemplates.supportConfirmContact(contact), {
         parse_mode: "HTML",
@@ -57,11 +61,15 @@ export default function callbackHandler(bot, pool) {
     // --- SUPPORT: entering tg username manually ---
     if (st.step === "wait_support_tg") {
       if (!isValidTgUsername(msgText)) {
-        await ctx.reply("❗ Отправьте, пожалуйста, Telegram username в формате @username (латиница/цифры/подчёркивания).");
+        await ctx.reply("❗ Отправьте Telegram username в формате @username (латиница/цифры/подчёркивания).");
         return;
       }
       const contact = normTgUsername(msgText);
-      setState(userId, { supportContact: contact, supportContactType: "tg", step: "support_confirm_contact" });
+      setState(userId, {
+        supportContact: contact,
+        supportContactType: "tg",
+        step: "support_confirm_contact",
+      });
 
       await ctx.reply(textTemplates.supportConfirmContact(contact), {
         parse_mode: "HTML",
@@ -96,7 +104,10 @@ export default function callbackHandler(bot, pool) {
         console.warn("⚠️ sendSupportEmail failed:", e?.message || e);
       }
 
-      await ctx.reply(textTemplates.supportThanks, { parse_mode: "HTML", ...mainMenuKeyboard() });
+      await ctx.reply(textTemplates.supportThanks, {
+        parse_mode: "HTML",
+        ...mainMenuKeyboard(),
+      });
       return;
     }
   });
@@ -181,9 +192,13 @@ export default function callbackHandler(bot, pool) {
       return;
     }
 
-    // ---------------- SUPPORT (multi-step + legal SLA) ----------------
+    // ---------------- SUPPORT ----------------
     if (data === "MENU_SUPPORT") {
-      setState(userId, { step: "support_choose_channel", supportContact: null, supportContactType: null });
+      setState(userId, {
+        step: "support_choose_channel",
+        supportContact: null,
+        supportContactType: null,
+      });
       await safeEdit(textTemplates.supportStart, {
         reply_markup: {
           inline_keyboard: [
@@ -199,7 +214,11 @@ export default function callbackHandler(bot, pool) {
     if (data === "SUPPORT_CHOOSE_TG") {
       const username = ctx.from?.username ? `@${ctx.from.username}` : "";
       if (username) {
-        setState(userId, { supportContactType: "tg", supportContact: username, step: "support_confirm_contact" });
+        setState(userId, {
+          supportContactType: "tg",
+          supportContact: username,
+          step: "support_confirm_contact",
+        });
         await safeEdit(textTemplates.supportConfirmContact(username), {
           reply_markup: {
             inline_keyboard: [
@@ -223,7 +242,6 @@ export default function callbackHandler(bot, pool) {
     }
 
     if (data === "SUPPORT_CHANGE_CONTACT") {
-      // возвращаем к выбору канала, чтобы было понятно
       setState(userId, { step: "support_choose_channel", supportContact: null, supportContactType: null });
       await safeEdit(textTemplates.supportStart, {
         reply_markup: {
@@ -252,7 +270,10 @@ export default function callbackHandler(bot, pool) {
 
     if (data === "SUPPORT_SEND_MESSAGE") {
       setState(userId, { step: "wait_support_message" });
-      await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", { parse_mode: "HTML", ...mainMenuKeyboard() });
+      await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
+        parse_mode: "HTML",
+        ...mainMenuKeyboard(),
+      });
       return;
     }
 
@@ -276,7 +297,7 @@ export default function callbackHandler(bot, pool) {
             [{ text: "🔒 Политика конфиденциальности", callback_data: "PRIVACY_IN_FLOW" }],
             [{ text: `${pdOk ? "✅ " : ""}Согласие на обработку ПДн`, callback_data: "DOC_CONSENT_PD_IN_FLOW" }],
             [{ text: `${thirdOk ? "✅ " : ""}Согласие на третьих лиц`, callback_data: "DOC_CONSENT_THIRD_IN_FLOW" }],
-            [{ text: "⬅️ Назад", callback_data: "RETURN_FROM_CONSENTS" }],
+            [{ text: "⬅️ Назад", callback_data: "MENU_HOME" }],
           ],
         },
       });
@@ -287,28 +308,26 @@ export default function callbackHandler(bot, pool) {
       const plan = st.plan; // "pro" | "premium"
       const planLabel = plan === "premium" ? "PREMIUM" : "PRO";
 
-      const url =
-        plan === "premium" ? process.env.YOOMONEY_PAY_URL_PREMIUM : process.env.YOOMONEY_PAY_URL_PRO;
+      const url = plan === "premium" ? process.env.YOOMONEY_PAY_URL_PREMIUM : process.env.YOOMONEY_PAY_URL_PRO;
 
       const html =
         `${textTemplates.paymentInfoCommon}\n\n` +
         `<b>Выбран тариф:</b> ${planLabel}\n` +
-        (url ? `\n👉 <a href="${url}">Открыть оплату ЮMoney</a>` : `\n⚠️ Ссылка оплаты не настроена.`);
+        (url ? "\nНажмите кнопку ниже, чтобы перейти к оплате." : "\n⚠️ Ссылка оплаты не настроена.");
 
       await safeEdit(html, {
         reply_markup: {
           inline_keyboard: [
-            url ? [{ text: "💳 Оплатить в ЮMoney", url }] : [],
+            ...(url ? [[{ text: "💳 Оплатить в ЮMoney", url }]] : []),
             [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-          ].filter((row) => row.length > 0),
+          ],
         },
       });
     };
 
-    // ---------------- PAYMENT START (from tariff) ----------------
+    // ---------------- PAYMENT START ----------------
     if (data === "PAY_START_PRO" || data === "PAY_START_PREMIUM") {
-      // фиксируем выбранный план заранее (п.2)
-      setState(userId, { plan: data === "PAY_START_PREMIUM" ? "premium" : "pro", afterConsents: "payment" });
+      setState(userId, { plan: data === "PAY_START_PREMIUM" ? "premium" : "pro" });
 
       const st = getState(userId);
       if (st.consentPd && st.consentThird) {
@@ -320,33 +339,22 @@ export default function callbackHandler(bot, pool) {
       return;
     }
 
-    // ---------------- PRIVACY IN CONSENT FLOW ----------------
+    // ---------------- PRIVACY IN FLOW ----------------
     if (data === "PRIVACY_IN_FLOW") {
       await safeEdit(textTemplates.privacyInConsentFlow, {
         reply_markup: {
-          inline_keyboard: [
-            [{ text: "Далее к соглашениям", callback_data: "CONSENT_MENU" }],
-          ],
+          inline_keyboard: [[{ text: "Далее к соглашениям", callback_data: "CONSENT_MENU" }]],
         },
       });
       return;
     }
 
-    // ---------------- CONSENT MENU ----------------
     if (data === "CONSENT_MENU") {
       await showConsentMenu();
       return;
     }
 
-    // Return button from consent menu
-    if (data === "RETURN_FROM_CONSENTS") {
-      // если пришли из оплаты — возвращаем на экран оплаты-старта (по смыслу: обратно к тарифу)
-      // проще: вернуть в главное меню (но ты просила вести к оплате после согласий; назад не критично)
-      await safeEdit("Главное меню:", mainMenuKeyboard());
-      return;
-    }
-
-    // ---------------- DOCS IN FLOW (each with accept + back) ----------------
+    // ---------------- DOCS IN FLOW ----------------
     if (data === "DOC_CONSENT_PD_IN_FLOW") {
       await safeEdit(textTemplates.docs.consentPd, {
         reply_markup: {
@@ -372,11 +380,9 @@ export default function callbackHandler(bot, pool) {
     }
 
     if (data === "CONSENT_PD_ACCEPT") {
-      setState(userId, { consentPd: true, consentPdAt: new Date().toISOString(), consentPdVersion: "2026-01-18" });
-
+      setState(userId, { consentPd: true });
       const st = getState(userId);
       if (st.consentPd && st.consentThird) {
-        // все согласия приняты -> перейти к оплате выбранного тарифа (п.2)
         acceptAllConsents(userId);
         await goToPaymentScreen();
       } else {
@@ -386,12 +392,7 @@ export default function callbackHandler(bot, pool) {
     }
 
     if (data === "CONSENT_THIRD_ACCEPT") {
-      setState(userId, {
-        consentThird: true,
-        consentThirdAt: new Date().toISOString(),
-        consentThirdVersion: "2026-01-18",
-      });
-
+      setState(userId, { consentThird: true });
       const st = getState(userId);
       if (st.consentPd && st.consentThird) {
         acceptAllConsents(userId);
@@ -404,36 +405,4 @@ export default function callbackHandler(bot, pool) {
 
     // ---------------- DELETE FLOW ----------------
     if (data === "MENU_DELETE") {
-      await safeEdit(textTemplates.deleteIntro, {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: "✅ Удалить", callback_data: "DELETE_CONFIRM" },
-              { text: "❌ Не удалять", callback_data: "DELETE_CANCEL" },
-            ],
-            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-          ],
-        },
-      });
-      return;
-    }
-
-    if (data === "DELETE_CANCEL") {
-      await safeEdit(textTemplates.deleteCancelled, backToMenuKb);
-      return;
-    }
-
-    if (data === "DELETE_CONFIRM") {
-      if (pool) {
-        try {
-          await deleteUserDataFromDB(pool, userId);
-        } catch (e) {
-          console.warn("⚠️ deleteUserDataFromDB failed:", e?.message || e);
-        }
-      }
-      resetUserData(userId);
-      await safeEdit(textTemplates.deleteDone, backToMenuKb);
-      return;
-    }
-  });
-}
+      await safeEdit(textTemplates
