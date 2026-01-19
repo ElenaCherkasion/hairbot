@@ -1,30 +1,48 @@
 // src/utils/mailer.js
 import nodemailer from "nodemailer";
 
-function mustEnv(name) {
+function required(name) {
   const v = (process.env[name] || "").trim();
   if (!v) throw new Error(`${name} is missing`);
   return v;
 }
 
-export async function sendSupportEmail({ subject, text }) {
-  const host = mustEnv("SMTP_HOST");
-  const port = Number(mustEnv("SMTP_PORT"));
-  const secure = String(process.env.SMTP_SECURE || "false") === "true";
-  const user = mustEnv("SMTP_USER");
-  const pass = mustEnv("SMTP_PASS");
+function boolEnv(name, def = false) {
+  const v = (process.env[name] || "").trim().toLowerCase();
+  if (!v) return def;
+  return v === "true" || v === "1" || v === "yes" || v === "on";
+}
 
-  const to = (process.env.SUPPORT_TO_EMAIL || "cherkashina720@gmail.com").trim();
+let cachedTransporter = null;
 
-  const transporter = nodemailer.createTransport({
+function getTransporter() {
+  if (cachedTransporter) return cachedTransporter;
+
+  const host = required("SMTP_HOST");
+  const port = Number(required("SMTP_PORT"));
+  const secure = boolEnv("SMTP_SECURE", port === 465);
+  const user = required("SMTP_USER");
+  const pass = required("SMTP_PASS");
+
+  cachedTransporter = nodemailer.createTransport({
     host,
     port,
     secure,
     auth: { user, pass },
   });
 
-  await transporter.sendMail({
-    from: user,
+  return cachedTransporter;
+}
+
+export async function sendSupportEmail({ subject, text }) {
+  const to = (process.env.SUPPORT_TO_EMAIL || process.env.SMTP_USER || "").trim();
+  if (!to) throw new Error("SUPPORT_TO_EMAIL is missing");
+
+  const fromUser = (process.env.SMTP_USER || "").trim();
+
+  const transporter = getTransporter();
+  return transporter.sendMail({
+    from: `HAIRbot <${fromUser}>`,
     to,
     subject,
     text,
