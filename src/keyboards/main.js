@@ -1,34 +1,26 @@
 // src/keyboards/main.js
-import { Markup } from "telegraf";
+export function mainMenuKeyboard() {
+  return {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "FREE", callback_data: "MENU_TARIFF_FREE" }],
+        [{ text: "PRO", callback_data: "MENU_TARIFF_PRO" }],
+        [{ text: "PREMIUM", callback_data: "MENU_TARIFF_PREMIUM" }],
+        [{ text: "Сравнение тарифов", callback_data: "MENU_WHATSIN" }],
+        [{ text: "Примеры анализа", callback_data: "MENU_EXAMPLES" }],
+        [{ text: "Политика конфиденциальности", callback_data: "MENU_PRIVACY" }],
+        [{ text: "Оплата и возврат", callback_data: "MENU_PAYMENTS" }],
+        [{ text: "Поддержка", callback_data: "MENU_SUPPORT" }],
+        [{ text: "Удалить мои данные", callback_data: "MENU_DELETE" }],
+      ],
+    },
+  };
+}
 
-export const mainMenuKeyboard = () =>
-  Markup.inlineKeyboard([
-    // Тарифы (логически выделены)
-    [
-      Markup.button.callback("🆓 FREE", "MENU_TARIFF_FREE"),
-      Markup.button.callback("⭐ PRO", "MENU_TARIFF_PRO"),
-    ],
-    [
-      Markup.button.callback("💎 PREMIUM", "MENU_TARIFF_PREMIUM"),
-      Markup.button.callback("📊 Сравнение тарифов", "MENU_WHATSIN"),
-    ],
-
-    // Примеры
-    [Markup.button.callback("🧾 Примеры анализа", "MENU_EXAMPLES")],
-
-    // Документы
-    [
-      Markup.button.callback("🔒 Конфиденциальность", "MENU_PRIVACY"),
-      Markup.button.callback("💳 Оплата и возврат", "MENU_PAYMENTS"),
-    ],
-
-    // Поддержка / данные
-    [
-      Markup.button.callback("🆘 Поддержка", "MENU_SUPPORT"),
-      Markup.button.callback("🗑 Удалить мои данные", "MENU_DELETE"),
-    ],
-  ]);
-
-// оставляем для совместимости с твоим start.js
-export const backToMenuKeyboard = () =>
-  Markup.inlineKeyboard([[Markup.button.callback("⬅️ В меню", "MENU_HOME")]]);
+export function backToMenuKeyboard() {
+  return {
+    reply_markup: {
+      inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+    },
+  };
+}
