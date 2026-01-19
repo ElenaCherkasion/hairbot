@@ -271,13 +271,12 @@ export default function callbackHandler(bot, pool) {
    if (data === "SUPPORT_SEND_MESSAGE") {
   setState(userId, { step: "wait_support_message" });
 
-  await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
-    parse_mode: "HTML",
-    reply_markup: {
-      inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
-    },
-  });
-
+await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
+  parse_mode: "HTML",
+  reply_markup: {
+    inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+  },
+});
   return;
 }
     // ---------------- CONSENT FLOW HELPERS ----------------
