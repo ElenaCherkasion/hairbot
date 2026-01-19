@@ -20,6 +20,31 @@ function getToken() {
   ).trim();
 }
 
+function createPoolIfConfigured() {
+  if (!process.env.DATABASE_URL) {
+    console.log("ℹ️ DATABASE_URL not set — DB disabled");
+    return null;
+  }
+
+  const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : false,
+  });
+
+  console.log("✅ DB pool created");
+  return pool;
+}
+
+function getWebhookConfig() {
+  // ОБЯЗАТЕЛЬНО задай WEBHOOK_BASE_URL в Render:
+  // например: https://hairstyle-bot.onrender.com
+  const base = (process.env.WEBHOOK_BASE_URL || "").trim().replace(/\/+$/, "");
+  const path = (process.env.WEBHOOK_PATH || "/telegraf").trim();
+
+  if (!base) return null;
+  return { base, path, url: `${base}${path}` };
+}
+
 export async function startBot() {
   console.log("🚀 =================================");
   console.log("🚀 ЗАПУСК HAIRBOT");
@@ -33,39 +58,68 @@ export async function startBot() {
   console.log("   Рабочая директория:", process.cwd());
   console.log("========================================");
 
-  // --- healthcheck for Render ---
-  const app = express();
-  app.get("/", (_req, res) => res.status(200).send("ok"));
-  app.get("/health", (_req, res) => res.status(200).send("ok"));
-  const port = Number(process.env.PORT || 3000);
-  app.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
-
-  // --- token ---
   const token = getToken();
   if (!token) throw new Error("TELEGRAM_BOT_TOKEN is missing");
 
-  // --- DB pool (optional) ---
-  let pool = null;
-  if (process.env.DATABASE_URL) {
-    pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : false,
-    });
-    console.log("✅ DB pool created");
-  } else {
-    console.log("ℹ️ DATABASE_URL not set — DB disabled");
-  }
+  const pool = createPoolIfConfigured();
 
-  // --- bot ---
   const bot = new Telegraf(token);
-
   startHandler(bot);
   callbackHandler(bot, pool);
 
-  await bot.launch();
-  console.log("✅ Bot launched");
+  const app = express();
 
-  // graceful stop
-  process.once("SIGINT", () => bot.stop("SIGINT"));
-  process.once("SIGTERM", () => bot.stop("SIGTERM"));
+  // healthcheck (чтобы Render не убивал сервис)
+  app.get("/", (_req, res) => res.status(200).send("ok"));
+  app.get("/health", (_req, res) => res.status(200).send("ok"));
+
+  const port = Number(process.env.PORT || 3000);
+  const wh = getWebhookConfig();
+
+  if (wh) {
+    // WEBHOOK MODE (рекомендуется для Render)
+    console.log("✅ Using WEBHOOK mode:", wh.url);
+
+    // endpoint для телеграма
+    app.use(wh.path, bot.webhookCallback(wh.path));
+
+    // запускаем HTTP сервер
+    app.listen(port, async () => {
+      console.log(`✅ Healthcheck+Webhook server on :${port}`);
+
+      try {
+        await bot.telegram.setWebhook(wh.url);
+        console.log("✅ Telegram webhook set:", wh.url);
+      } catch (e) {
+        console.error("❌ Failed to set webhook:", e?.message || e);
+      }
+    });
+  } else {
+    // POLLING MODE (fallback, если не задан WEBHOOK_BASE_URL)
+    console.log("ℹ️ WEBHOOK_BASE_URL not set — using POLLING mode");
+    app.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
+
+    try {
+      // на всякий случай очищаем webhook, чтобы polling работал
+      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+    } catch (e) {
+      console.warn("⚠️ deleteWebhook failed (can ignore):", e?.message || e);
+    }
+
+    await bot.launch();
+    console.log("✅ Bot launched (polling)");
+  }
+
+  process.once("SIGINT", async () => {
+    try {
+      if (wh) await bot.telegram.deleteWebhook();
+    } catch {}
+    bot.stop("SIGINT");
+  });
+  process.once("SIGTERM", async () => {
+    try {
+      if (wh) await bot.telegram.deleteWebhook();
+    } catch {}
+    bot.stop("SIGTERM");
+  });
 }
