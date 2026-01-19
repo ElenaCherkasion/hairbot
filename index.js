@@ -1,4 +1,4 @@
-// index.js (root)
+// index.js
 import { startBot } from "./src/index.js";
 
 startBot().catch((e) => {
