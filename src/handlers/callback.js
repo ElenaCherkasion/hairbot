@@ -403,6 +403,42 @@ export default function callbackHandler(bot, pool) {
       return;
     }
 
-    // ---------------- DELETE FLOW ----------------
+        // ---------------- DELETE FLOW ----------------
     if (data === "MENU_DELETE") {
-      await safeEdit(textTemplates
+      await safeEdit(textTemplates.deleteIntro, {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "✅ Удалить", callback_data: "DELETE_CONFIRM" },
+              { text: "❌ Не удалять", callback_data: "DELETE_CANCEL" },
+            ],
+            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+          ],
+        },
+      });
+      return;
+    }
+
+    if (data === "DELETE_CANCEL") {
+      await safeEdit(textTemplates.deleteCancelled, backToMenuKb);
+      return;
+    }
+
+    if (data === "DELETE_CONFIRM") {
+      if (pool) {
+        try {
+          await deleteUserDataFromDB(pool, userId);
+        } catch (e) {
+          console.warn("⚠️ deleteUserDataFromDB failed:", e?.message || e);
+        }
+      }
+      resetUserData(userId);
+      await safeEdit(textTemplates.deleteDone, backToMenuKb);
+      return;
+    }
+
+    // fallback
+    await safeEdit("Неизвестная команда. Откройте меню:", mainMenuKeyboard());
+    return;
+  }); // <-- закрываем bot.on("callback_query"...)
+} // <-- закрываем callbackHandler
