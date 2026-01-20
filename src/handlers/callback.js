@@ -91,6 +91,16 @@ export default function callbackHandler(bot, pool) {
       const contact = st.supportContact || "не указан";
       const contactType = st.supportContactType || "unknown";
 
+      const hasEmailConfig =
+        !!process.env.SMTP_HOST && !!process.env.SMTP_PORT && !!process.env.SMTP_USER && !!process.env.SMTP_PASS;
+      if (!hasEmailConfig) {
+        await ctx.reply("⚠️ Поддержка временно недоступна. Пожалуйста, попробуйте позже.", {
+          parse_mode: "HTML",
+          ...mainMenuKeyboard(),
+        });
+        return;
+      }
+
       const subject = `HAIRbot Support | user_id=${userId}`;
       const text =
         `User ID: ${userId}\n` +
@@ -100,14 +110,17 @@ export default function callbackHandler(bot, pool) {
 
       try {
         await sendSupportEmail({ subject, text });
+        await ctx.reply(textTemplates.supportThanks, {
+          parse_mode: "HTML",
+          ...mainMenuKeyboard(),
+        });
       } catch (e) {
         console.warn("⚠️ sendSupportEmail failed:", e?.message || e);
+        await ctx.reply("⚠️ Не удалось отправить сообщение. Пожалуйста, попробуйте позже.", {
+          parse_mode: "HTML",
+          ...mainMenuKeyboard(),
+        });
       }
-
-      await ctx.reply(textTemplates.supportThanks, {
-        parse_mode: "HTML",
-        ...mainMenuKeyboard(),
-      });
       return;
     }
   });
@@ -289,7 +302,7 @@ export default function callbackHandler(bot, pool) {
         textTemplates.consentMenu,
         "",
         `Статус:`,
-        `${pdOk ? "✅" : "⬜️"} Согласие на обработку ПДн`,
+        `${pdOk ? "✅" : "⬜️"} Согласие на обработку персональных данных`,
         `${thirdOk ? "✅" : "⬜️"} Согласие на третьих лиц`,
       ].join("\n");
 
@@ -297,7 +310,12 @@ export default function callbackHandler(bot, pool) {
         reply_markup: {
           inline_keyboard: [
             [{ text: "🔒 Политика конфиденциальности", callback_data: "PRIVACY_IN_FLOW" }],
-            [{ text: `${pdOk ? "✅ " : ""}Согласие на обработку ПДн`, callback_data: "DOC_CONSENT_PD_IN_FLOW" }],
+            [
+              {
+                text: `${pdOk ? "✅ " : ""}Согласие на обработку персональных данных`,
+                callback_data: "DOC_CONSENT_PD_IN_FLOW",
+              },
+            ],
             [{ text: `${thirdOk ? "✅ " : ""}Согласие на третьих лиц`, callback_data: "DOC_CONSENT_THIRD_IN_FLOW" }],
             [{ text: "⬅️ Назад", callback_data: "MENU_HOME" }],
           ],
@@ -308,6 +326,14 @@ export default function callbackHandler(bot, pool) {
     const goToPaymentScreen = async () => {
       const st = getState(userId);
       const plan = st.plan; // "pro" | "premium"
+      if (plan !== "pro" && plan !== "premium") {
+        await safeEdit("⚠️ Не удалось продолжить оформление. Пожалуйста, начните с выбора тарифа.", {
+          reply_markup: {
+            inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+          },
+        });
+        return;
+      }
       const planLabel = plan === "premium" ? "PREMIUM" : "PRO";
 
       const url = plan === "premium" ? process.env.YOOMONEY_PAY_URL_PREMIUM : process.env.YOOMONEY_PAY_URL_PRO;
@@ -326,6 +352,13 @@ export default function callbackHandler(bot, pool) {
         },
       });
     };
+
+    // ---------------- FREE START ----------------
+    if (data === "FREE_START") {
+      setState(userId, { plan: "free", paid: false, step: "consent_flow" });
+      await showConsentMenu();
+      return;
+    }
 
     // ---------------- PAYMENT START ----------------
     if (data === "PAY_START_PRO" || data === "PAY_START_PREMIUM") {

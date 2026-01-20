@@ -23,7 +23,7 @@ export default function photoHandler(bot) {
           reply_markup: {
             inline_keyboard: [
               [{ text: "🔒 Политика конфиденциальности", callback_data: "PRIVACY_IN_FLOW" }],
-              [{ text: "Согласие на обработку ПДн", callback_data: "DOC_CONSENT_PD_IN_FLOW" }],
+              [{ text: "Согласие на обработку персональных данных", callback_data: "DOC_CONSENT_PD_IN_FLOW" }],
               [{ text: "Согласие на третьих лиц", callback_data: "DOC_CONSENT_THIRD_IN_FLOW" }],
               [{ text: "Главное меню", callback_data: "MENU_HOME" }],
             ],
@@ -49,7 +49,7 @@ export default function photoHandler(bot) {
         reply_markup: {
           inline_keyboard: [
             [{ text: "🔒 Политика конфиденциальности", callback_data: "PRIVACY_IN_FLOW" }],
-            [{ text: "Согласие на обработку ПДн", callback_data: "DOC_CONSENT_PD_IN_FLOW" }],
+            [{ text: "Согласие на обработку персональных данных", callback_data: "DOC_CONSENT_PD_IN_FLOW" }],
             [{ text: "Согласие на третьих лиц", callback_data: "DOC_CONSENT_THIRD_IN_FLOW" }],
             [{ text: "Главное меню", callback_data: "MENU_HOME" }],
           ],
