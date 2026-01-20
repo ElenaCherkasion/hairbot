@@ -35,8 +35,7 @@ function getTransporter() {
 }
 
 export async function sendSupportEmail({ subject, text }) {
-  const to = (process.env.SUPPORT_TO_EMAIL || process.env.SMTP_USER || "").trim();
-  if (!to) throw new Error("SUPPORT_TO_EMAIL is missing");
+  const to = (process.env.SUPPORT_TO_EMAIL || process.env.SMTP_USER || "cherkashina720@gmail.com").trim();
 
   const fromUser = (process.env.SMTP_USER || "").trim();
 

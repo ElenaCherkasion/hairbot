@@ -1,6 +1,6 @@
 // src/handlers/photo.js
 import textTemplates from "../utils/text-templates.js";
-import { canAcceptPhoto, getState } from "../utils/storage.js";
+import { canAcceptPhoto, getState, setState } from "../utils/storage.js";
 
 export default function photoHandler(bot) {
   bot.on("photo", async (ctx) => {
@@ -10,31 +10,48 @@ export default function photoHandler(bot) {
     const st = getState(userId);
 
     if (!canAcceptPhoto(userId)) {
-      if (st.deleted) {
-        await ctx.reply("Ваши данные были удалены. Начните заново через меню и дайте согласия.", {
+      if (!st.plan) {
+        await ctx.reply("Чтобы отправить фото, выберите тариф в меню.", {
           reply_markup: { inline_keyboard: [[{ text: "Главное меню", callback_data: "MENU_HOME" }]] },
         });
         return;
       }
-      if (!st.plan || st.plan === "free") {
-        await ctx.reply("Чтобы отправить фото, выберите тариф PRO или PREMIUM в меню.", {
-          reply_markup: { inline_keyboard: [[{ text: "Выбрать тариф", callback_data: "MENU_START" }]] },
+      if (st.plan === "free") {
+        setState(userId, { step: "consent_flow" });
+        await ctx.reply(textTemplates.consentMenu, {
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "🔒 Политика конфиденциальности", callback_data: "PRIVACY_IN_FLOW" }],
+              [{ text: "Согласие на обработку персональных данных", callback_data: "DOC_CONSENT_PD_IN_FLOW" }],
+              [{ text: "Согласие на третьих лиц", callback_data: "DOC_CONSENT_THIRD_IN_FLOW" }],
+              [{ text: "Главное меню", callback_data: "MENU_HOME" }],
+            ],
+          },
         });
         return;
       }
       if (!st.paid) {
-        await ctx.reply("Чтобы отправить фото, сначала оплатите тариф. (Тест: /pay_ok)");
+        const payCallback = st.plan === "premium" ? "PAY_START_PREMIUM" : "PAY_START_PRO";
+        await ctx.reply("Чтобы отправить фото, сначала оплатите тариф. (Тест: /pay_ok)", {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "💳 Перейти к оплате", callback_data: payCallback }],
+              [{ text: "Главное меню", callback_data: "MENU_HOME" }],
+            ],
+          },
+        });
         return;
       }
-      await ctx.reply(textTemplates.consentScreen, {
+      setState(userId, { step: "consent_flow" });
+      await ctx.reply(textTemplates.consentMenu, {
+        parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
-            [{ text: "✅ Принять и продолжить", callback_data: "CONSENT_ACCEPT_ALL" }],
-            [{ text: "📄 Политика конфиденциальности", callback_data: "MENU_PRIVACY" }],
-            [{ text: "📄 Согласие на обработку ПДн", callback_data: "DOC_CONSENT_PD" }],
-            [{ text: "📄 Согласие на передачу третьим лицам", callback_data: "DOC_CONSENT_THIRD" }],
-            [{ text: "❌ Отказаться", callback_data: "CONSENT_DECLINE" }],
-            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+            [{ text: "🔒 Политика конфиденциальности", callback_data: "PRIVACY_IN_FLOW" }],
+            [{ text: "Согласие на обработку персональных данных", callback_data: "DOC_CONSENT_PD_IN_FLOW" }],
+            [{ text: "Согласие на третьих лиц", callback_data: "DOC_CONSENT_THIRD_IN_FLOW" }],
+            [{ text: "Главное меню", callback_data: "MENU_HOME" }],
           ],
         },
       });
@@ -51,6 +68,6 @@ export default function photoHandler(bot) {
   });
 
   bot.command("photo", (ctx) => {
-    ctx.reply(textTemplates.photoInstructions);
+    ctx.reply(textTemplates.photoInstructions, { parse_mode: "HTML" });
   });
 }

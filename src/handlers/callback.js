@@ -91,6 +91,16 @@ export default function callbackHandler(bot, pool) {
       const contact = st.supportContact || "не указан";
       const contactType = st.supportContactType || "unknown";
 
+      const hasEmailConfig =
+        !!process.env.SMTP_HOST && !!process.env.SMTP_PORT && !!process.env.SMTP_USER && !!process.env.SMTP_PASS;
+      if (!hasEmailConfig) {
+        await ctx.reply("⚠️ Поддержка временно недоступна. Пожалуйста, попробуйте позже.", {
+          parse_mode: "HTML",
+          ...mainMenuKeyboard(),
+        });
+        return;
+      }
+
       const subject = `HAIRbot Support | user_id=${userId}`;
       const text =
         `User ID: ${userId}\n` +
@@ -100,14 +110,17 @@ export default function callbackHandler(bot, pool) {
 
       try {
         await sendSupportEmail({ subject, text });
+        await ctx.reply(textTemplates.supportThanks, {
+          parse_mode: "HTML",
+          ...mainMenuKeyboard(),
+        });
       } catch (e) {
         console.warn("⚠️ sendSupportEmail failed:", e?.message || e);
+        await ctx.reply("⚠️ Не удалось отправить сообщение. Пожалуйста, попробуйте позже.", {
+          parse_mode: "HTML",
+          ...mainMenuKeyboard(),
+        });
       }
-
-      await ctx.reply(textTemplates.supportThanks, {
-        parse_mode: "HTML",
-        ...mainMenuKeyboard(),
-      });
       return;
     }
   });
@@ -141,13 +154,20 @@ export default function callbackHandler(bot, pool) {
 
     // ---------------- TARIFFS ----------------
     if (data === "MENU_TARIFF_FREE") {
-      setState(userId, { plan: "free" });
-      await safeEdit(textTemplates.tariffFree, backToMenuKb);
+      setState(userId, { plan: "free", paid: false });
+      await safeEdit(textTemplates.tariffFree, {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🚀 Начать", callback_data: "FREE_START" }],
+            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+          ],
+        },
+      });
       return;
     }
 
     if (data === "MENU_TARIFF_PRO") {
-      setState(userId, { plan: "pro" });
+      setState(userId, { plan: "pro", paid: false });
       await safeEdit(textTemplates.tariffPro, {
         reply_markup: {
           inline_keyboard: [
@@ -160,7 +180,7 @@ export default function callbackHandler(bot, pool) {
     }
 
     if (data === "MENU_TARIFF_PREMIUM") {
-      setState(userId, { plan: "premium" });
+      setState(userId, { plan: "premium", paid: false });
       await safeEdit(textTemplates.tariffPremium, {
         reply_markup: {
           inline_keyboard: [
@@ -268,17 +288,17 @@ export default function callbackHandler(bot, pool) {
       return;
     }
 
-   if (data === "SUPPORT_SEND_MESSAGE") {
-  setState(userId, { step: "wait_support_message" });
+    if (data === "SUPPORT_SEND_MESSAGE") {
+      setState(userId, { step: "wait_support_message" });
 
-await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
-  parse_mode: "HTML",
-  reply_markup: {
-    inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
-  },
-});
-  return;
-}
+      await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+        },
+      });
+      return;
+    }
     // ---------------- CONSENT FLOW HELPERS ----------------
     const showConsentMenu = async () => {
       const st = getState(userId);
@@ -289,7 +309,7 @@ await ctx.reply("Напишите ваше сообщение <b>сообщен�
         textTemplates.consentMenu,
         "",
         `Статус:`,
-        `${pdOk ? "✅" : "⬜️"} Согласие на обработку ПДн`,
+        `${pdOk ? "✅" : "⬜️"} Согласие на обработку персональных данных`,
         `${thirdOk ? "✅" : "⬜️"} Согласие на третьих лиц`,
       ].join("\n");
 
@@ -297,7 +317,12 @@ await ctx.reply("Напишите ваше сообщение <b>сообщен�
         reply_markup: {
           inline_keyboard: [
             [{ text: "🔒 Политика конфиденциальности", callback_data: "PRIVACY_IN_FLOW" }],
-            [{ text: `${pdOk ? "✅ " : ""}Согласие на обработку ПДн`, callback_data: "DOC_CONSENT_PD_IN_FLOW" }],
+            [
+              {
+                text: `${pdOk ? "✅ " : ""}Согласие на обработку персональных данных`,
+                callback_data: "DOC_CONSENT_PD_IN_FLOW",
+              },
+            ],
             [{ text: `${thirdOk ? "✅ " : ""}Согласие на третьих лиц`, callback_data: "DOC_CONSENT_THIRD_IN_FLOW" }],
             [{ text: "⬅️ Назад", callback_data: "MENU_HOME" }],
           ],
@@ -308,6 +333,14 @@ await ctx.reply("Напишите ваше сообщение <b>сообщен�
     const goToPaymentScreen = async () => {
       const st = getState(userId);
       const plan = st.plan; // "pro" | "premium"
+      if (plan !== "pro" && plan !== "premium") {
+        await safeEdit("⚠️ Не удалось продолжить оформление. Пожалуйста, начните с выбора тарифа.", {
+          reply_markup: {
+            inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+          },
+        });
+        return;
+      }
       const planLabel = plan === "premium" ? "PREMIUM" : "PRO";
 
       const url = plan === "premium" ? process.env.YOOMONEY_PAY_URL_PREMIUM : process.env.YOOMONEY_PAY_URL_PRO;
@@ -327,9 +360,16 @@ await ctx.reply("Напишите ваше сообщение <b>сообщен�
       });
     };
 
+    // ---------------- FREE START ----------------
+    if (data === "FREE_START") {
+      setState(userId, { plan: "free", paid: false, step: "consent_flow" });
+      await showConsentMenu();
+      return;
+    }
+
     // ---------------- PAYMENT START ----------------
     if (data === "PAY_START_PRO" || data === "PAY_START_PREMIUM") {
-      setState(userId, { plan: data === "PAY_START_PREMIUM" ? "premium" : "pro" });
+      setState(userId, { plan: data === "PAY_START_PREMIUM" ? "premium" : "pro", paid: false });
 
       const st = getState(userId);
       if (st.consentPd && st.consentThird) {
@@ -386,7 +426,24 @@ await ctx.reply("Напишите ваше сообщение <b>сообщен�
       const st = getState(userId);
       if (st.consentPd && st.consentThird) {
         acceptAllConsents(userId);
-        await goToPaymentScreen();
+        if (st.plan === "pro" || st.plan === "premium") {
+          await goToPaymentScreen();
+        } else if (st.plan === "free") {
+          await safeEdit(textTemplates.paymentPlaceholderFree, {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "💳 Оплатить в ЮMoney", url: textTemplates.paymentPlaceholderUrl }],
+                [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+              ],
+            },
+          });
+        } else {
+          await safeEdit("⚠️ Не удалось продолжить оформление. Пожалуйста, начните с выбора тарифа.", {
+            reply_markup: {
+              inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+            },
+          });
+        }
       } else {
         await showConsentMenu();
       }
@@ -398,7 +455,24 @@ await ctx.reply("Напишите ваше сообщение <b>сообщен�
       const st = getState(userId);
       if (st.consentPd && st.consentThird) {
         acceptAllConsents(userId);
-        await goToPaymentScreen();
+        if (st.plan === "pro" || st.plan === "premium") {
+          await goToPaymentScreen();
+        } else if (st.plan === "free") {
+          await safeEdit(textTemplates.paymentPlaceholderFree, {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "💳 Оплатить в ЮMoney", url: textTemplates.paymentPlaceholderUrl }],
+                [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+              ],
+            },
+          });
+        } else {
+          await safeEdit("⚠️ Не удалось продолжить оформление. Пожалуйста, начните с выбора тарифа.", {
+            reply_markup: {
+              inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+            },
+          });
+        }
       } else {
         await showConsentMenu();
       }
