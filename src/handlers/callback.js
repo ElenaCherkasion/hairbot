@@ -155,14 +155,7 @@ export default function callbackHandler(bot, pool) {
     // ---------------- TARIFFS ----------------
     if (data === "MENU_TARIFF_FREE") {
       setState(userId, { plan: "free", paid: false });
-      await safeEdit(textTemplates.tariffFree, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "🚀 Начать", callback_data: "FREE_START" }],
-            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-          ],
-        },
-      });
+      await safeEdit(textTemplates.tariffFree, backToMenuKb);
       return;
     }
 
@@ -428,17 +421,8 @@ export default function callbackHandler(bot, pool) {
         acceptAllConsents(userId);
         if (st.plan === "pro" || st.plan === "premium") {
           await goToPaymentScreen();
-        } else if (st.plan === "free") {
-          await safeEdit(textTemplates.paymentPlaceholderFree, {
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: "💳 Оплатить в ЮMoney", url: textTemplates.paymentPlaceholderUrl }],
-                [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-              ],
-            },
-          });
         } else {
-          await safeEdit("⚠️ Не удалось продолжить оформление. Пожалуйста, начните с выбора тарифа.", {
+          await safeEdit("✅ Согласия приняты. Теперь отправьте фото сообщением в этот чат.", {
             reply_markup: {
               inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
             },
@@ -457,17 +441,8 @@ export default function callbackHandler(bot, pool) {
         acceptAllConsents(userId);
         if (st.plan === "pro" || st.plan === "premium") {
           await goToPaymentScreen();
-        } else if (st.plan === "free") {
-          await safeEdit(textTemplates.paymentPlaceholderFree, {
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: "💳 Оплатить в ЮMoney", url: textTemplates.paymentPlaceholderUrl }],
-                [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-              ],
-            },
-          });
         } else {
-          await safeEdit("⚠️ Не удалось продолжить оформление. Пожалуйста, начните с выбора тарифа.", {
+          await safeEdit("✅ Согласия приняты. Теперь отправьте фото сообщением в этот чат.", {
             reply_markup: {
               inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
             },
