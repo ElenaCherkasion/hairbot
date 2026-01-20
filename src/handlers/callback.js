@@ -155,7 +155,14 @@ export default function callbackHandler(bot, pool) {
     // ---------------- TARIFFS ----------------
     if (data === "MENU_TARIFF_FREE") {
       setState(userId, { plan: "free", paid: false });
-      await safeEdit(textTemplates.tariffFree, backToMenuKb);
+      await safeEdit(textTemplates.tariffFree, {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "✨ Сделать пробную генерацию", callback_data: "FREE_START" }],
+            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+          ],
+        },
+      });
       return;
     }
 
