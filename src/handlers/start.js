@@ -20,6 +20,10 @@ export default function startHandler(bot) {
 
   // тестовая команда
   bot.command("pay_ok", async (ctx) => {
+    const userId = ctx.from?.id;
+    if (userId) {
+      setState(userId, { paid: true });
+    }
     await ctx.reply("✅ Тест: оплата подтверждена (заглушка).");
   });
 }

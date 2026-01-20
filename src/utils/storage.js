@@ -6,6 +6,7 @@ function ensure(userId) {
     STORE.set(userId, {
       step: "idle",
       plan: null, // free|pro|premium
+      paid: false,
       consentPd: false,
       consentThird: false,
       supportContact: null,
