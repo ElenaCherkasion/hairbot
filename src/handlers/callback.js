@@ -141,13 +141,13 @@ export default function callbackHandler(bot, pool) {
 
     // ---------------- TARIFFS ----------------
     if (data === "MENU_TARIFF_FREE") {
-      setState(userId, { plan: "free" });
+      setState(userId, { plan: "free", paid: false });
       await safeEdit(textTemplates.tariffFree, backToMenuKb);
       return;
     }
 
     if (data === "MENU_TARIFF_PRO") {
-      setState(userId, { plan: "pro" });
+      setState(userId, { plan: "pro", paid: false });
       await safeEdit(textTemplates.tariffPro, {
         reply_markup: {
           inline_keyboard: [
@@ -160,7 +160,7 @@ export default function callbackHandler(bot, pool) {
     }
 
     if (data === "MENU_TARIFF_PREMIUM") {
-      setState(userId, { plan: "premium" });
+      setState(userId, { plan: "premium", paid: false });
       await safeEdit(textTemplates.tariffPremium, {
         reply_markup: {
           inline_keyboard: [
@@ -268,17 +268,17 @@ export default function callbackHandler(bot, pool) {
       return;
     }
 
-   if (data === "SUPPORT_SEND_MESSAGE") {
-  setState(userId, { step: "wait_support_message" });
+    if (data === "SUPPORT_SEND_MESSAGE") {
+      setState(userId, { step: "wait_support_message" });
 
-await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
-  parse_mode: "HTML",
-  reply_markup: {
-    inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
-  },
-});
-  return;
-}
+      await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+        },
+      });
+      return;
+    }
     // ---------------- CONSENT FLOW HELPERS ----------------
     const showConsentMenu = async () => {
       const st = getState(userId);
@@ -329,7 +329,7 @@ await ctx.reply("Напишите ваше сообщение <b>сообщен�
 
     // ---------------- PAYMENT START ----------------
     if (data === "PAY_START_PRO" || data === "PAY_START_PREMIUM") {
-      setState(userId, { plan: data === "PAY_START_PREMIUM" ? "premium" : "pro" });
+      setState(userId, { plan: data === "PAY_START_PREMIUM" ? "premium" : "pro", paid: false });
 
       const st = getState(userId);
       if (st.consentPd && st.consentThird) {
@@ -386,7 +386,15 @@ await ctx.reply("Напишите ваше сообщение <b>сообщен�
       const st = getState(userId);
       if (st.consentPd && st.consentThird) {
         acceptAllConsents(userId);
-        await goToPaymentScreen();
+        if (st.plan === "pro" || st.plan === "premium") {
+          await goToPaymentScreen();
+        } else {
+          await safeEdit("✅ Согласия приняты. Теперь отправьте фото сообщением в этот чат.", {
+            reply_markup: {
+              inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+            },
+          });
+        }
       } else {
         await showConsentMenu();
       }
@@ -398,7 +406,15 @@ await ctx.reply("Напишите ваше сообщение <b>сообщен�
       const st = getState(userId);
       if (st.consentPd && st.consentThird) {
         acceptAllConsents(userId);
-        await goToPaymentScreen();
+        if (st.plan === "pro" || st.plan === "premium") {
+          await goToPaymentScreen();
+        } else {
+          await safeEdit("✅ Согласия приняты. Теперь отправьте фото сообщением в этот чат.", {
+            reply_markup: {
+              inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+            },
+          });
+        }
       } else {
         await showConsentMenu();
       }
