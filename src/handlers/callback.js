@@ -367,7 +367,7 @@ export default function callbackHandler(bot, pool) {
       setState(userId, { step: "wait_support_message", supportContact: null, supportContactType: "none" });
       await safeEdit(textTemplates.supportReadyToMessage, {
         reply_markup: {
-          inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+          inline_keyboard: keyboard,
         },
       });
       return;
