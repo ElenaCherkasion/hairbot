@@ -64,7 +64,7 @@
     "beauty"
   ],
 
-  "author": "Elena Cherkasova <cherkashina720@gmail.com>",
+  "author": "Elena Cherkasova",
   "license": "MIT",
 
   "repository": {
@@ -88,7 +88,6 @@
     "helmet": "^7.0.0",
     "mysql2": "^3.6.0",
     "node-fetch": "^3.3.2",
-    "nodemailer": "^6.9.15",
     "openai": "^4.20.0",
     "pg": "^8.11.5",
     "sequelize": "^6.35.0",
