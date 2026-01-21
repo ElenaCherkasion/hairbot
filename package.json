@@ -35,6 +35,7 @@
     "webhook:test": "node scripts/setup-webhook.js test",
 
     "health": "node scripts/check-health.js",
+    "support:email:test": "node scripts/test-support-email.js",
 
     "clean": "rm -rf node_modules logs backups",
     "clean:logs": "rm -f logs/*.log || true",
