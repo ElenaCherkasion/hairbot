@@ -10,26 +10,14 @@ import {
   canUseFreeTariff,
   getNextFreeTariffAt,
 } from "../utils/storage.js";
-import { sendSupportEmail } from "../utils/mailer.js";
 import { withTimeout } from "../utils/with-timeout.js";
 
-const SUPPORT_EMAIL_TIMEOUT_MS = Number(process.env.SUPPORT_EMAIL_TIMEOUT_MS || 10000);
-
-function isValidEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
-}
-function isValidTgUsername(u) {
-  const s = String(u || "").trim();
-  return /^@?[a-zA-Z0-9_]{5,32}$/.test(s);
-}
-function normTgUsername(u) {
-  const s = String(u || "").trim();
-  if (!s) return "";
-  return s.startsWith("@") ? s : `@${s}`;
-}
+const SUPPORT_MESSAGE_TIMEOUT_MS = Number(process.env.SUPPORT_MESSAGE_TIMEOUT_MS || 10000);
+const SUPPORT_CHAT_ID = process.env.SUPPORT_CHAT_ID;
+const SUPPORT_TG_LINK = process.env.SUPPORT_TG_LINK || "";
 
 export default function callbackHandler(bot, pool) {
-  // ====== TEXT INPUT HANDLER (support email / support tg / support message) ======
+  // ====== TEXT INPUT HANDLER (support message) ======
   bot.on("text", async (ctx) => {
     const userId = ctx.from?.id;
     if (!userId) return;
@@ -37,68 +25,11 @@ export default function callbackHandler(bot, pool) {
     const st = getState(userId);
     const msgText = (ctx.message?.text || "").trim();
 
-    // --- SUPPORT: entering email ---
-    if (st.step === "wait_support_email") {
-      if (!isValidEmail(msgText)) {
-        await ctx.reply("❗ Похоже, это не email. Пожалуйста, отправьте email ещё раз сообщением ниже.");
-        return;
-      }
-      const contact = msgText;
-      setState(userId, {
-        supportContact: contact,
-        supportContactType: "email",
-        step: "support_confirm_contact",
-      });
-
-      await ctx.reply(textTemplates.supportConfirmContact(contact), {
-        parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "✅ Подтвердить", callback_data: "SUPPORT_CONFIRM_CONTACT" }],
-            [{ text: "✏️ Изменить", callback_data: "SUPPORT_CHANGE_CONTACT" }],
-            [{ text: "⬅️ В меню", callback_data: "MENU_HOME" }],
-          ],
-        },
-      });
-      return;
-    }
-
-    // --- SUPPORT: entering tg username manually ---
-    if (st.step === "wait_support_tg") {
-      if (!isValidTgUsername(msgText)) {
-        await ctx.reply("❗ Отправьте Telegram username в формате @username (латиница/цифры/подчёркивания).");
-        return;
-      }
-      const contact = normTgUsername(msgText);
-      setState(userId, {
-        supportContact: contact,
-        supportContactType: "tg",
-        step: "support_confirm_contact",
-      });
-
-      await ctx.reply(textTemplates.supportConfirmContact(contact), {
-        parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "✅ Подтвердить", callback_data: "SUPPORT_CONFIRM_CONTACT" }],
-            [{ text: "✏️ Изменить", callback_data: "SUPPORT_CHANGE_CONTACT" }],
-            [{ text: "⬅️ В меню", callback_data: "MENU_HOME" }],
-          ],
-        },
-      });
-      return;
-    }
-
     // --- SUPPORT: final message to send ---
     if (st.step === "wait_support_message" || st.step === "support_ready_to_message") {
       setState(userId, { step: "idle" });
 
-      const contact = st.supportContact || "не указан";
-      const contactType = st.supportContactType || "unknown";
-
-      const hasEmailConfig =
-        !!process.env.SMTP_HOST && !!process.env.SMTP_PORT && !!process.env.SMTP_USER && !!process.env.SMTP_PASS;
-      if (!hasEmailConfig) {
+      if (!SUPPORT_CHAT_ID) {
         await ctx.reply("⚠️ Поддержка временно недоступна. Пожалуйста, попробуйте позже.", {
           parse_mode: "HTML",
           ...mainMenuKeyboard(),
@@ -106,34 +37,34 @@ export default function callbackHandler(bot, pool) {
         return;
       }
 
-      const subject = `HAIRbot Support | user_id=${userId}`;
-      const text =
-        `User ID: ${userId}\n` +
-        `Contact type: ${contactType}\n` +
-        `Contact: ${contact}\n\n` +
-        `Message:\n${msgText}\n`;
+      const text = `User ID: ${userId}\n\nMessage:\n${msgText}\n`;
 
       try {
         await withTimeout(
-          sendSupportEmail({ subject, text }),
-          SUPPORT_EMAIL_TIMEOUT_MS,
-          "Support email send timed out"
+          bot.telegram.sendMessage(SUPPORT_CHAT_ID, text),
+          SUPPORT_MESSAGE_TIMEOUT_MS,
+          "Support message send timed out"
         );
-        await ctx.reply("✅ Сообщение отправлено в поддержку.", {
+        await ctx.reply(textTemplates.supportThanks, {
           parse_mode: "HTML",
           ...mainMenuKeyboard(),
         });
       } catch (e) {
-        console.error("❌ sendSupportEmail failed:", {
+        console.error("❌ sendSupportMessage failed:", {
           message: e?.message,
           code: e?.code,
           response: e?.response,
           stack: e?.stack,
         });
-        await ctx.reply("✅ Сообщение принято. Если письмо не дойдёт — мы свяжемся с вами в Telegram.", {
-          parse_mode: "HTML",
-          ...mainMenuKeyboard(),
-        });
+        await ctx.reply(
+          textTemplates.supportThanksFallback(
+            SUPPORT_TG_LINK ? `<a href="${SUPPORT_TG_LINK}">написать в поддержку</a>` : "написать в поддержку"
+          ),
+          {
+            parse_mode: "HTML",
+            ...mainMenuKeyboard(),
+          }
+        );
       }
       return;
     }
@@ -296,84 +227,15 @@ export default function callbackHandler(bot, pool) {
 
     // ---------------- SUPPORT ----------------
     if (data === "MENU_SUPPORT") {
-      setState(userId, {
-        step: "support_choose_channel",
-        supportContact: null,
-        supportContactType: null,
-      });
-      await safeEdit(textTemplates.supportStart, {
+      setState(userId, { step: "wait_support_message", supportContact: null, supportContactType: null });
+      const supportLink = SUPPORT_TG_LINK ? `<a href="${SUPPORT_TG_LINK}">написать в поддержку</a>` : "";
+      const keyboard = [
+        ...(SUPPORT_TG_LINK ? [[{ text: "💬 Написать в поддержку", url: SUPPORT_TG_LINK }]] : []),
+        [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+      ];
+      await safeEdit(textTemplates.supportStart(supportLink), {
         reply_markup: {
-          inline_keyboard: [
-            [{ text: "💬 Ответ в Telegram", callback_data: "SUPPORT_CHOOSE_TG" }],
-            [{ text: "📩 Ответ на Email", callback_data: "SUPPORT_CHOOSE_EMAIL" }],
-            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-          ],
-        },
-      });
-      return;
-    }
-
-    if (data === "SUPPORT_CHOOSE_TG") {
-      const username = ctx.from?.username ? `@${ctx.from.username}` : "";
-      if (username) {
-        setState(userId, {
-          supportContactType: "tg",
-          supportContact: username,
-          step: "support_confirm_contact",
-        });
-        await safeEdit(textTemplates.supportConfirmContact(username), {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "✅ Подтвердить", callback_data: "SUPPORT_CONFIRM_CONTACT" }],
-              [{ text: "✏️ Изменить", callback_data: "SUPPORT_CHANGE_CONTACT" }],
-              [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-            ],
-          },
-        });
-      } else {
-        setState(userId, { supportContactType: "tg", supportContact: null, step: "wait_support_tg" });
-        await ctx.reply(textTemplates.supportAskTg, { parse_mode: "HTML", ...mainMenuKeyboard() });
-      }
-      return;
-    }
-
-    if (data === "SUPPORT_CHOOSE_EMAIL") {
-      setState(userId, { supportContactType: "email", supportContact: null, step: "wait_support_email" });
-      await ctx.reply(textTemplates.supportAskEmail, { parse_mode: "HTML", ...mainMenuKeyboard() });
-      return;
-    }
-
-    if (data === "SUPPORT_CHANGE_CONTACT") {
-      setState(userId, { step: "support_choose_channel", supportContact: null, supportContactType: null });
-      await safeEdit(textTemplates.supportStart, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "💬 Ответ в Telegram", callback_data: "SUPPORT_CHOOSE_TG" }],
-            [{ text: "📩 Ответ на Email", callback_data: "SUPPORT_CHOOSE_EMAIL" }],
-            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-          ],
-        },
-      });
-      return;
-    }
-
-    if (data === "SUPPORT_CONFIRM_CONTACT") {
-      setState(userId, { step: "wait_support_message" });
-      await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
-        parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
-        },
-      });
-      return;
-    }
-
-    if (data === "SUPPORT_SEND_MESSAGE") {
-      setState(userId, { step: "wait_support_message" });
-      await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
-        parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+          inline_keyboard: keyboard,
         },
       });
       return;
