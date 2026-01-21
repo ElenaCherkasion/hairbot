@@ -26,8 +26,9 @@ export function mainMenuKeyboard() {
         // Поддержка и данные
         [
           { text: "🆘 Поддержка", callback_data: "MENU_SUPPORT" },
-          { text: "🗑 Удалить мои данные", callback_data: "MENU_DELETE" },
+          { text: "❓ FAQ", callback_data: "MENU_FAQ" },
         ],
+        [{ text: "🗑 Удалить мои данные", callback_data: "MENU_DELETE" }],
       ],
     },
   };
