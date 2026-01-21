@@ -14,6 +14,7 @@ import { withTimeout } from "../utils/with-timeout.js";
 
 const SUPPORT_MESSAGE_TIMEOUT_MS = Number(process.env.SUPPORT_MESSAGE_TIMEOUT_MS || 10000);
 const SUPPORT_CHAT_ID = process.env.SUPPORT_CHAT_ID;
+const SUPPORT_CHAT_ID_NUM = SUPPORT_CHAT_ID ? Number(SUPPORT_CHAT_ID) : null;
 const SUPPORT_TG_LINK = process.env.SUPPORT_TG_LINK || "";
 const SUPPORT_MENU_LINK = (process.env.SUPPORT_MENU_LINK || "").trim();
 const SUPPORT_AGENT_USERNAME = (process.env.SUPPORT_AGENT_USERNAME || "le_cherk").replace(/^@/, "");
@@ -49,6 +50,10 @@ export default function callbackHandler(bot, pool) {
     if (SUPPORT_AGENT_USERNAME && ctx.from?.username === SUPPORT_AGENT_USERNAME) return true;
     return false;
   };
+  const isSupportSender = (ctx) => {
+    if (SUPPORT_CHAT_ID_NUM && ctx.chat?.id === SUPPORT_CHAT_ID_NUM) return true;
+    return isSupportAgent(ctx);
+  };
   const notifyUserDelivery = async (userId, message, ctx) => {
     try {
       await bot.telegram.sendMessage(userId, message, {
@@ -78,7 +83,7 @@ export default function callbackHandler(bot, pool) {
     const st = getState(userId);
     const msgText = (ctx.message?.text || "").trim();
 
-    if (isSupportAgent(ctx) && msgText.startsWith("/")) {
+    if (isSupportSender(ctx) && msgText.startsWith("/")) {
       const match = msgText.match(/^\/(support_reply|reply)\s+(\d+)\s+([\s\S]+)$/);
       if (!match) {
         await ctx.reply("⚠️ Неверный формат. Используйте: /support_reply <user_id> <текст ответа>");
