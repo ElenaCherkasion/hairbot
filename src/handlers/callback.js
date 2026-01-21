@@ -7,6 +7,8 @@ import {
   resetUserData,
   acceptAllConsents,
   deleteUserDataFromDB,
+  canUseFreeTariff,
+  getNextFreeTariffAt,
 } from "../utils/storage.js";
 import { sendSupportEmail } from "../utils/mailer.js";
 
@@ -85,7 +87,7 @@ export default function callbackHandler(bot, pool) {
     }
 
     // --- SUPPORT: final message to send ---
-    if (st.step === "wait_support_message") {
+    if (st.step === "wait_support_message" || st.step === "support_ready_to_message") {
       setState(userId, { step: "idle" });
 
       const contact = st.supportContact || "не указан";
@@ -110,7 +112,11 @@ export default function callbackHandler(bot, pool) {
 
       try {
         await sendSupportEmail({ subject, text });
-        await ctx.reply(textTemplates.supportThanks, {
+        await ctx.reply("✅ Сообщение отправлено.", {
+          parse_mode: "HTML",
+          ...mainMenuKeyboard(),
+        });
+        await ctx.reply("✅ Сообщение доставлено.", {
           parse_mode: "HTML",
           ...mainMenuKeyboard(),
         });
@@ -131,14 +137,23 @@ export default function callbackHandler(bot, pool) {
     const data = ctx.callbackQuery?.data;
     if (!userId || !data) return;
 
-    await ctx.answerCbQuery();
+    try {
+      await ctx.answerCbQuery();
+    } catch (error) {
+      await ctx.reply(textTemplates.stuckInstruction, mainMenuKeyboard());
+      return;
+    }
 
     const safeEdit = async (html, extra) => {
       const payload = { parse_mode: "HTML", ...(extra || mainMenuKeyboard()) };
       try {
         await ctx.editMessageText(html, payload);
       } catch {
-        await ctx.reply(html, payload);
+        try {
+          await ctx.reply(html, payload);
+        } catch {
+          await ctx.reply(textTemplates.stuckInstruction, mainMenuKeyboard());
+        }
       }
     };
 
@@ -148,7 +163,7 @@ export default function callbackHandler(bot, pool) {
 
     // ---------------- MENU_HOME ----------------
     if (data === "MENU_HOME") {
-      await safeEdit("Главное меню:", mainMenuKeyboard());
+      await safeEdit(textTemplates.mainMenuDescription, mainMenuKeyboard());
       return;
     }
 
@@ -209,6 +224,65 @@ export default function callbackHandler(bot, pool) {
     }
     if (data === "MENU_PAYMENTS") {
       await safeEdit(textTemplates.paymentsStandalone, backToMenuKb);
+      return;
+    }
+    if (data === "MENU_OFFER") {
+      await safeEdit(textTemplates.offer, backToMenuKb);
+      return;
+    }
+    if (data === "MENU_FAQ") {
+      await safeEdit(textTemplates.faqIntro, {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Насколько обобщенным будет анализ?", callback_data: "FAQ_GENERAL" }],
+            [{ text: "У меня обычное фото с телефона, подойдет?", callback_data: "FAQ_PHOTO" }],
+            [{ text: "Если у меня сейчас другой цвет волос, это не исказит анализ?", callback_data: "FAQ_HAIR_COLOR" }],
+            [{ text: "Если мне не нравится результат анализа?", callback_data: "FAQ_RESULT" }],
+            [{ text: "Для чего мне это анализ?", callback_data: "FAQ_PURPOSE" }],
+            [{ text: "Мои фото где-то сохраняются?", callback_data: "FAQ_STORAGE" }],
+            [{ text: "Что если бот ошибется?", callback_data: "FAQ_ERRORS" }],
+            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+          ],
+        },
+      });
+      return;
+    }
+
+    const faqBackKb = {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "⬅️ Назад к FAQ", callback_data: "MENU_FAQ" }],
+          [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+        ],
+      },
+    };
+
+    if (data === "FAQ_GENERAL") {
+      await safeEdit(textTemplates.faqAnswers.general, faqBackKb);
+      return;
+    }
+    if (data === "FAQ_PHOTO") {
+      await safeEdit(textTemplates.faqAnswers.photo, faqBackKb);
+      return;
+    }
+    if (data === "FAQ_HAIR_COLOR") {
+      await safeEdit(textTemplates.faqAnswers.hairColor, faqBackKb);
+      return;
+    }
+    if (data === "FAQ_RESULT") {
+      await safeEdit(textTemplates.faqAnswers.result, faqBackKb);
+      return;
+    }
+    if (data === "FAQ_PURPOSE") {
+      await safeEdit(textTemplates.faqAnswers.purpose, faqBackKb);
+      return;
+    }
+    if (data === "FAQ_STORAGE") {
+      await safeEdit(textTemplates.faqAnswers.storage, faqBackKb);
+      return;
+    }
+    if (data === "FAQ_ERRORS") {
+      await safeEdit(textTemplates.faqAnswers.errors, faqBackKb);
       return;
     }
 
@@ -276,13 +350,11 @@ export default function callbackHandler(bot, pool) {
     }
 
     if (data === "SUPPORT_CONFIRM_CONTACT") {
-      setState(userId, { step: "support_ready_to_message" });
-      await safeEdit(textTemplates.supportSendMessageHint, {
+      setState(userId, { step: "wait_support_message" });
+      await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
+        parse_mode: "HTML",
         reply_markup: {
-          inline_keyboard: [
-            [{ text: "✉️ Отправить сообщение", callback_data: "SUPPORT_SEND_MESSAGE" }],
-            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-          ],
+          inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
         },
       });
       return;
@@ -290,7 +362,6 @@ export default function callbackHandler(bot, pool) {
 
     if (data === "SUPPORT_SEND_MESSAGE") {
       setState(userId, { step: "wait_support_message" });
-
       await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
         parse_mode: "HTML",
         reply_markup: {
@@ -344,16 +415,61 @@ export default function callbackHandler(bot, pool) {
       const planLabel = plan === "premium" ? "PREMIUM" : "PRO";
 
       const url = plan === "premium" ? process.env.YOOMONEY_PAY_URL_PREMIUM : process.env.YOOMONEY_PAY_URL_PRO;
+      const offerUrl = (process.env.PUBLIC_OFFER_URL || process.env.OFFER_URL || "").trim();
 
       const html =
         `${textTemplates.paymentInfoCommon}\n\n` +
         `<b>Выбран тариф:</b> ${planLabel}\n` +
-        (url ? "\nНажмите кнопку ниже, чтобы перейти к оплате." : "\n⚠️ Ссылка оплаты не настроена.");
+        (url ? "\nНажмите кнопку ниже, чтобы перейти к оплате." : "\n⚠️ Ссылка оплаты не настроена.") +
+        "\n\nНажимая «Продолжить», вы подтверждаете согласие с условиями публичной оферты.";
+
+      await safeEdit(html, {
+        reply_markup: {
+          inline_keyboard: [
+            ...(url
+              ? [[{ text: "Продолжить", callback_data: "PAY_CONTINUE" }]]
+              : []),
+            [
+              offerUrl
+                ? { text: "📄 Публичная оферта", url: offerUrl }
+                : { text: "📄 Публичная оферта", callback_data: "MENU_OFFER" },
+            ],
+            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+          ],
+        },
+      });
+    };
+
+    const showPaymentButton = async () => {
+      const st = getState(userId);
+      const plan = st.plan;
+      if (plan !== "pro" && plan !== "premium") {
+        await safeEdit("⚠️ Не удалось продолжить оформление. Пожалуйста, начните с выбора тарифа.", {
+          reply_markup: {
+            inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+          },
+        });
+        return;
+      }
+      const planLabel = plan === "premium" ? "PREMIUM" : "PRO";
+      const url = plan === "premium" ? process.env.YOOMONEY_PAY_URL_PREMIUM : process.env.YOOMONEY_PAY_URL_PRO;
+      const offerUrl = (process.env.PUBLIC_OFFER_URL || process.env.OFFER_URL || "").trim();
+
+      const html =
+        `${textTemplates.paymentInfoCommon}\n\n` +
+        `<b>Выбран тариф:</b> ${planLabel}\n` +
+        (url ? "\nНажмите кнопку ниже, чтобы перейти к оплате." : "\n⚠️ Ссылка оплаты не настроена.") +
+        "\n\nНажимая кнопку оплаты, вы принимаете условия публичной оферты со ссылкой на отдельную страницу с документом.";
 
       await safeEdit(html, {
         reply_markup: {
           inline_keyboard: [
             ...(url ? [[{ text: "💳 Оплатить в ЮMoney", url }]] : []),
+            [
+              offerUrl
+                ? { text: "📄 Публичная оферта", url: offerUrl }
+                : { text: "📄 Публичная оферта", callback_data: "MENU_OFFER" },
+            ],
             [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
           ],
         },
@@ -362,6 +478,14 @@ export default function callbackHandler(bot, pool) {
 
     // ---------------- FREE START ----------------
     if (data === "FREE_START") {
+      if (!canUseFreeTariff(userId)) {
+        const nextAt = getNextFreeTariffAt(userId);
+        const nextText = nextAt
+          ? `Следующая бесплатная попытка будет доступна ${nextAt.toLocaleDateString("ru-RU")}.`
+          : "Следующая бесплатная попытка будет доступна позже.";
+        await safeEdit(`⚠️ Бесплатный тариф доступен раз в 30 дней.\n${nextText}`, backToMenuKb);
+        return;
+      }
       setState(userId, { plan: "free", paid: false, step: "consent_flow" });
       await showConsentMenu();
       return;
@@ -378,6 +502,11 @@ export default function callbackHandler(bot, pool) {
         setState(userId, { step: "consent_flow" });
         await showConsentMenu();
       }
+      return;
+    }
+
+    if (data === "PAY_CONTINUE") {
+      await showPaymentButton();
       return;
     }
 
