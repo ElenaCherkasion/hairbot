@@ -34,6 +34,10 @@ services:
         value: 30000
       - key: SUPPORT_CHAT_ID
         sync: false
+      - key: SUPPORT_AGENT_USERNAME
+        sync: false
+      - key: SUPPORT_AGENT_ID
+        sync: false
       - key: SUPPORT_TG_LINK
         sync: false
       - key: TEST_PAYMENT_MODE

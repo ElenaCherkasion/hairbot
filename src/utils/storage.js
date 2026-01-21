@@ -14,6 +14,7 @@ function ensure(userId) {
       supportContact: null,
       supportContactType: null,
       restartNoticeSeenId: 0,
+      offerAccepted: false,
     });
   }
   return STORE.get(userId);
