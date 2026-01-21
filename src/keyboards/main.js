@@ -1,6 +1,7 @@
 // src/keyboards/main.js
 
 export function mainMenuKeyboard() {
+  const offerUrl = (process.env.PUBLIC_OFFER_URL || process.env.OFFER_URL || "").trim();
   return {
     reply_markup: {
       inline_keyboard: [
@@ -20,13 +21,18 @@ export function mainMenuKeyboard() {
         // Документы
         [
           { text: "🔒 Конфиденциальность", callback_data: "MENU_PRIVACY" },
-          { text: "💳 Оплата и возврат", callback_data: "MENU_PAYMENTS" },
+          offerUrl
+            ? { text: "📄 Публичная оферта", url: offerUrl }
+            : { text: "📄 Публичная оферта", callback_data: "MENU_OFFER" },
         ],
-
-        // Поддержка и данные
+        // Поддержка и FAQ
         [
           { text: "🆘 Поддержка", callback_data: "MENU_SUPPORT" },
+          { text: "❓ FAQ", callback_data: "MENU_FAQ" },
+        ],
+        [
           { text: "🗑 Удалить мои данные", callback_data: "MENU_DELETE" },
+          { text: "💳 Оплата и возврат", callback_data: "MENU_PAYMENTS" },
         ],
       ],
     },
