@@ -362,7 +362,7 @@ export default function callbackHandler(bot, pool) {
       setState(userId, { step: "support_contact_custom" });
       await safeEdit(textTemplates.supportContactCustomPrompt, {
         reply_markup: {
-          inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+          inline_keyboard: keyboard,
         },
       });
       return;
