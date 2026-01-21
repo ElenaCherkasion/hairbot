@@ -25,7 +25,7 @@ export default function callbackHandler(bot, pool) {
     SUPPORT_TG_LINK ? `<a href="${SUPPORT_TG_LINK}">написать в поддержку</a>` : "написать в поддержку";
   const getSupportMenuLinkHtml = () =>
     SUPPORT_MENU_LINK
-      ? `<a href="${SUPPORT_MENU_LINK}">🆘 Поддержка</a>`
+      ? `<a href="${SUPPORT_MENU_LINK}">пункт меню «🆘 Поддержка»</a>`
       : "пункт меню «🆘 Поддержка»";
   const isSupportAgent = (ctx) => {
     if (SUPPORT_AGENT_ID && ctx.from?.id === SUPPORT_AGENT_ID) return true;
