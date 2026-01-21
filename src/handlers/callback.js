@@ -7,6 +7,8 @@ import {
   resetUserData,
   acceptAllConsents,
   deleteUserDataFromDB,
+  canUseFreeTariff,
+  getNextFreeTariffAt,
 } from "../utils/storage.js";
 import { sendSupportEmail } from "../utils/mailer.js";
 
@@ -148,7 +150,7 @@ export default function callbackHandler(bot, pool) {
 
     // ---------------- MENU_HOME ----------------
     if (data === "MENU_HOME") {
-      await safeEdit("Главное меню:", mainMenuKeyboard());
+      await safeEdit(textTemplates.mainMenuDescription, mainMenuKeyboard());
       return;
     }
 
@@ -362,6 +364,14 @@ export default function callbackHandler(bot, pool) {
 
     // ---------------- FREE START ----------------
     if (data === "FREE_START") {
+      if (!canUseFreeTariff(userId)) {
+        const nextAt = getNextFreeTariffAt(userId);
+        const nextText = nextAt
+          ? `Следующая бесплатная попытка будет доступна ${nextAt.toLocaleDateString("ru-RU")}.`
+          : "Следующая бесплатная попытка будет доступна позже.";
+        await safeEdit(`⚠️ Бесплатный тариф доступен раз в 30 дней.\n${nextText}`, backToMenuKb);
+        return;
+      }
       setState(userId, { plan: "free", paid: false, step: "consent_flow" });
       await showConsentMenu();
       return;
