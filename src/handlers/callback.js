@@ -15,6 +15,7 @@ import { withTimeout } from "../utils/with-timeout.js";
 const SUPPORT_MESSAGE_TIMEOUT_MS = Number(process.env.SUPPORT_MESSAGE_TIMEOUT_MS || 10000);
 const SUPPORT_CHAT_ID = process.env.SUPPORT_CHAT_ID;
 const SUPPORT_TG_LINK = process.env.SUPPORT_TG_LINK || "";
+const SUPPORT_MENU_LINK = (process.env.SUPPORT_MENU_LINK || "").trim();
 const SUPPORT_AGENT_USERNAME = (process.env.SUPPORT_AGENT_USERNAME || "le_cherk").replace(/^@/, "");
 const SUPPORT_AGENT_ID = Number(process.env.SUPPORT_AGENT_ID || 0) || null;
 const SUPPORT_TARGET = SUPPORT_CHAT_ID || (SUPPORT_AGENT_USERNAME ? `@${SUPPORT_AGENT_USERNAME}` : "");
@@ -22,6 +23,10 @@ const SUPPORT_TARGET = SUPPORT_CHAT_ID || (SUPPORT_AGENT_USERNAME ? `@${SUPPORT_
 export default function callbackHandler(bot, pool) {
   const getSupportLinkHtml = () =>
     SUPPORT_TG_LINK ? `<a href="${SUPPORT_TG_LINK}">написать в поддержку</a>` : "написать в поддержку";
+  const getSupportMenuLinkHtml = () =>
+    SUPPORT_MENU_LINK
+      ? `<a href="${SUPPORT_MENU_LINK}">🆘 Поддержка</a>`
+      : "пункт меню «🆘 Поддержка»";
   const isSupportAgent = (ctx) => {
     if (SUPPORT_AGENT_ID && ctx.from?.id === SUPPORT_AGENT_ID) return true;
     if (SUPPORT_AGENT_USERNAME && ctx.from?.username === SUPPORT_AGENT_USERNAME) return true;
@@ -139,6 +144,7 @@ export default function callbackHandler(bot, pool) {
     const data = ctx.callbackQuery?.data;
     if (!userId || !data) return;
     const supportLink = getSupportLinkHtml();
+    const supportMenuLink = getSupportMenuLinkHtml();
     const offerUrl = (process.env.PUBLIC_OFFER_URL || process.env.OFFER_URL || "").trim();
 
     try {
@@ -223,11 +229,11 @@ export default function callbackHandler(bot, pool) {
 
     // ---------------- STANDALONE PRIVACY / PAYMENTS ----------------
     if (data === "MENU_PRIVACY") {
-      await safeEdit(textTemplates.privacyStandalone(supportLink), backToMenuKb);
+      await safeEdit(textTemplates.privacyStandalone(supportMenuLink), backToMenuKb);
       return;
     }
     if (data === "MENU_PAYMENTS") {
-      await safeEdit(textTemplates.paymentsStandalone(supportLink), backToMenuKb);
+      await safeEdit(textTemplates.paymentsStandalone(supportMenuLink), backToMenuKb);
       return;
     }
     if (data === "MENU_OFFER") {
@@ -236,7 +242,7 @@ export default function callbackHandler(bot, pool) {
           getState(userId).consentPd &&
           getState(userId).consentThird
       );
-      const baseOffer = textTemplates.offer({ supportLink, offerUrl });
+      const baseOffer = textTemplates.offer({ supportLink: supportMenuLink, offerUrl });
       const offerHtml = shouldShowContinue
         ? `${baseOffer}\n\nНажимая «Продолжить», вы подтверждаете согласие с условиями публичной оферты.`
         : baseOffer;
@@ -317,7 +323,6 @@ export default function callbackHandler(bot, pool) {
       const keyboard = [
         ...(username ? [[{ text: `✅ Использовать ${username}`, callback_data: "SUPPORT_USE_USERNAME" }]] : []),
         [{ text: "✍️ Указать другой контакт", callback_data: "SUPPORT_ENTER_CONTACT" }],
-        [{ text: "➡️ Продолжить без контакта", callback_data: "SUPPORT_SKIP_CONTACT" }],
         ...(SUPPORT_TG_LINK ? [[{ text: "💬 Написать в поддержку", url: SUPPORT_TG_LINK }]] : []),
         [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
       ];
@@ -357,21 +362,12 @@ export default function callbackHandler(bot, pool) {
       setState(userId, { step: "support_contact_custom" });
       await safeEdit(textTemplates.supportContactCustomPrompt, {
         reply_markup: {
-          inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
-        },
-      });
-      return;
-    }
-
-    if (data === "SUPPORT_SKIP_CONTACT") {
-      setState(userId, { step: "wait_support_message", supportContact: null, supportContactType: "none" });
-      await safeEdit(textTemplates.supportReadyToMessage, {
-        reply_markup: {
           inline_keyboard: keyboard,
         },
       });
       return;
     }
+
     // ---------------- CONSENT FLOW HELPERS ----------------
     const showConsentMenu = async () => {
       const st = getState(userId);
@@ -415,17 +411,12 @@ export default function callbackHandler(bot, pool) {
         return;
       }
       setState(userId, { offerAccepted: false });
-      const baseOffer = textTemplates.offer({ supportLink, offerUrl });
+      const baseOffer = textTemplates.offer({ supportLink: supportMenuLink, offerUrl });
       const offerHtml = `${baseOffer}\n\nНажимая «Продолжить», вы подтверждаете согласие с условиями публичной оферты.`;
       await safeEdit(offerHtml, {
         reply_markup: {
           inline_keyboard: [
             [{ text: "Продолжить", callback_data: "OFFER_ACCEPT" }],
-            [
-              offerUrl
-                ? { text: "📄 Публичная оферта", url: offerUrl }
-                : { text: "📄 Публичная оферта", callback_data: "MENU_OFFER" },
-            ],
             [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
           ],
         },
@@ -488,7 +479,7 @@ export default function callbackHandler(bot, pool) {
 
     // ---------------- PRIVACY IN FLOW ----------------
     if (data === "PRIVACY_IN_FLOW") {
-      await safeEdit(textTemplates.privacyInConsentFlow(supportLink), {
+      await safeEdit(textTemplates.privacyInConsentFlow(supportMenuLink), {
         reply_markup: {
           inline_keyboard: [[{ text: "Далее к соглашениям", callback_data: "CONSENT_MENU" }]],
         },

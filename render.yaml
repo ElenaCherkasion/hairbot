@@ -40,6 +40,8 @@ services:
         sync: false
       - key: SUPPORT_TG_LINK
         sync: false
+      - key: SUPPORT_MENU_LINK
+        sync: false
       - key: TEST_PAYMENT_MODE
         value: "true"
       - key: DEBUG_MODE
