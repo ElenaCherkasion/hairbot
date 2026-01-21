@@ -94,15 +94,20 @@ export default function callbackHandler(bot, pool) {
 
       const contact = st.supportContact || "не указан";
       const createdAt = new Date().toLocaleString("ru-RU");
+      const username = ctx.from?.username ? `@${ctx.from.username}` : "не указан";
       const text = [
-        "🆘 Новое обращение в поддержку",
-        `User ID: ${userId}`,
+        "🆘 SUPPORT",
+        "",
+        "User:",
+        username,
+        `ID: ${userId}`,
+        "",
+        "Message:",
+        msgText,
+        "",
         `Контакт для обратной связи: ${contact}`,
         `Тариф: ${st.plan || "не выбран"}`,
         `Дата: ${createdAt}`,
-        "",
-        "Сообщение:",
-        msgText,
         "",
         `Ответить: /support_reply ${userId} <текст ответа>`,
       ].join("\n");
