@@ -222,8 +222,63 @@ export default function callbackHandler(bot, pool) {
       await safeEdit(textTemplates.paymentsStandalone, backToMenuKb);
       return;
     }
+    if (data === "MENU_OFFER") {
+      await safeEdit(textTemplates.offer, backToMenuKb);
+      return;
+    }
     if (data === "MENU_FAQ") {
-      await safeEdit(textTemplates.faq, backToMenuKb);
+      await safeEdit(textTemplates.faqIntro, {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Насколько обобщенным будет анализ?", callback_data: "FAQ_GENERAL" }],
+            [{ text: "У меня обычное фото с телефона, подойдет?", callback_data: "FAQ_PHOTO" }],
+            [{ text: "Если у меня сейчас другой цвет волос, это не исказит анализ?", callback_data: "FAQ_HAIR_COLOR" }],
+            [{ text: "Если мне не нравится результат анализа?", callback_data: "FAQ_RESULT" }],
+            [{ text: "Для чего мне это анализ?", callback_data: "FAQ_PURPOSE" }],
+            [{ text: "Мои фото где-то сохраняются?", callback_data: "FAQ_STORAGE" }],
+            [{ text: "Что если бот ошибется?", callback_data: "FAQ_ERRORS" }],
+            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+          ],
+        },
+      });
+      return;
+    }
+
+    const faqBackKb = {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "⬅️ Назад к FAQ", callback_data: "MENU_FAQ" }],
+          [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+        ],
+      },
+    };
+
+    if (data === "FAQ_GENERAL") {
+      await safeEdit(textTemplates.faqAnswers.general, faqBackKb);
+      return;
+    }
+    if (data === "FAQ_PHOTO") {
+      await safeEdit(textTemplates.faqAnswers.photo, faqBackKb);
+      return;
+    }
+    if (data === "FAQ_HAIR_COLOR") {
+      await safeEdit(textTemplates.faqAnswers.hairColor, faqBackKb);
+      return;
+    }
+    if (data === "FAQ_RESULT") {
+      await safeEdit(textTemplates.faqAnswers.result, faqBackKb);
+      return;
+    }
+    if (data === "FAQ_PURPOSE") {
+      await safeEdit(textTemplates.faqAnswers.purpose, faqBackKb);
+      return;
+    }
+    if (data === "FAQ_STORAGE") {
+      await safeEdit(textTemplates.faqAnswers.storage, faqBackKb);
+      return;
+    }
+    if (data === "FAQ_ERRORS") {
+      await safeEdit(textTemplates.faqAnswers.errors, faqBackKb);
       return;
     }
 
@@ -363,12 +418,14 @@ export default function callbackHandler(bot, pool) {
       const html =
         `${textTemplates.paymentInfoCommon}\n\n` +
         `<b>Выбран тариф:</b> ${planLabel}\n` +
-        (url ? "\nНажмите кнопку ниже, чтобы перейти к оплате." : "\n⚠️ Ссылка оплаты не настроена.");
+        (url ? "\nНажмите кнопку ниже, чтобы перейти к оплате." : "\n⚠️ Ссылка оплаты не настроена.") +
+        "\n\nНажимая кнопку оплаты, вы принимаете условия публичной оферты со ссылкой на отдельную страницу с документом.";
 
       await safeEdit(html, {
         reply_markup: {
           inline_keyboard: [
             ...(url ? [[{ text: "💳 Оплатить в ЮMoney", url }]] : []),
+            [{ text: "📄 Публичная оферта", callback_data: "MENU_OFFER" }],
             [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
           ],
         },
