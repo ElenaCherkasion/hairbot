@@ -13,6 +13,8 @@ function ensure(userId) {
       consentThird: false,
       supportContact: null,
       supportContactType: null,
+      restartNoticeSeenId: 0,
+      offerAccepted: false,
     });
   }
   return STORE.get(userId);

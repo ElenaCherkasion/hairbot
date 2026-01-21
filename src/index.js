@@ -63,8 +63,9 @@ export async function startBot() {
 
   const pool = createPoolIfConfigured();
 
+  const restartState = { id: 0, reason: "" };
   const bot = new Telegraf(token);
-  startHandler(bot);
+  startHandler(bot, restartState);
   callbackHandler(bot, pool);
 
   const app = express();
@@ -110,6 +111,16 @@ export async function startBot() {
     const isConflictError = (err) => err?.response?.error_code === 409;
     const isTimeoutError = (err) =>
       err?.name === "TimeoutError" || String(err?.message || "").includes("Promise timed out");
+    const restartAfterWait = async (reason) => {
+      restartState.id += 1;
+      restartState.reason = reason;
+      try {
+        await bot.stop("RESTART");
+      } catch {}
+      console.log(`🔄 Restarting bot after wait (${reason})...`);
+      await bot.launch();
+      console.log("✅ Bot relaunched (polling)");
+    };
 
     while (true) {
       try {
@@ -118,16 +129,32 @@ export async function startBot() {
         break;
       } catch (e) {
         if (isConflictError(e)) {
+          const reason = "обнаружен конфликт polling — бот уже запущен в другом месте";
           console.warn(
             "⚠️ Polling conflict detected (another instance is running). Retrying in 10s..."
           );
           await sleep(10000);
-          continue;
+          try {
+            await restartAfterWait(reason);
+            break;
+          } catch (restartError) {
+            console.warn("⚠️ Restart after conflict failed. Retrying in 10s...", restartError?.message);
+            await sleep(10000);
+            continue;
+          }
         }
         if (isTimeoutError(e)) {
+          const reason = "истекло время ожидания ответа Telegram";
           console.warn("⚠️ Polling timed out. Retrying in 10s...");
           await sleep(10000);
-          continue;
+          try {
+            await restartAfterWait(reason);
+            break;
+          } catch (restartError) {
+            console.warn("⚠️ Restart after timeout failed. Retrying in 10s...", restartError?.message);
+            await sleep(10000);
+            continue;
+          }
         }
         throw e;
       }

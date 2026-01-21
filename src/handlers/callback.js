@@ -10,26 +10,30 @@ import {
   canUseFreeTariff,
   getNextFreeTariffAt,
 } from "../utils/storage.js";
-import { sendSupportEmail } from "../utils/mailer.js";
 import { withTimeout } from "../utils/with-timeout.js";
 
-const SUPPORT_EMAIL_TIMEOUT_MS = Number(process.env.SUPPORT_EMAIL_TIMEOUT_MS || 10000);
-
-function isValidEmail(email) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
-}
-function isValidTgUsername(u) {
-  const s = String(u || "").trim();
-  return /^@?[a-zA-Z0-9_]{5,32}$/.test(s);
-}
-function normTgUsername(u) {
-  const s = String(u || "").trim();
-  if (!s) return "";
-  return s.startsWith("@") ? s : `@${s}`;
-}
+const SUPPORT_MESSAGE_TIMEOUT_MS = Number(process.env.SUPPORT_MESSAGE_TIMEOUT_MS || 10000);
+const SUPPORT_CHAT_ID = process.env.SUPPORT_CHAT_ID;
+const SUPPORT_TG_LINK = process.env.SUPPORT_TG_LINK || "";
+const SUPPORT_MENU_LINK = (process.env.SUPPORT_MENU_LINK || "").trim();
+const SUPPORT_AGENT_USERNAME = (process.env.SUPPORT_AGENT_USERNAME || "le_cherk").replace(/^@/, "");
+const SUPPORT_AGENT_ID = Number(process.env.SUPPORT_AGENT_ID || 0) || null;
+const SUPPORT_TARGET = SUPPORT_CHAT_ID || (SUPPORT_AGENT_USERNAME ? `@${SUPPORT_AGENT_USERNAME}` : "");
 
 export default function callbackHandler(bot, pool) {
-  // ====== TEXT INPUT HANDLER (support email / support tg / support message) ======
+  const getSupportLinkHtml = () =>
+    SUPPORT_TG_LINK ? `<a href="${SUPPORT_TG_LINK}">написать в поддержку</a>` : "написать в поддержку";
+  const getSupportMenuLinkHtml = () =>
+    SUPPORT_MENU_LINK
+      ? `<a href="${SUPPORT_MENU_LINK}">пункт меню «🆘 Поддержка»</a>`
+      : "пункт меню «🆘 Поддержка»";
+  const isSupportAgent = (ctx) => {
+    if (SUPPORT_AGENT_ID && ctx.from?.id === SUPPORT_AGENT_ID) return true;
+    if (SUPPORT_AGENT_USERNAME && ctx.from?.username === SUPPORT_AGENT_USERNAME) return true;
+    return false;
+  };
+
+  // ====== TEXT INPUT HANDLER (support message) ======
   bot.on("text", async (ctx) => {
     const userId = ctx.from?.id;
     if (!userId) return;
@@ -37,68 +41,50 @@ export default function callbackHandler(bot, pool) {
     const st = getState(userId);
     const msgText = (ctx.message?.text || "").trim();
 
-    // --- SUPPORT: entering email ---
-    if (st.step === "wait_support_email") {
-      if (!isValidEmail(msgText)) {
-        await ctx.reply("❗ Похоже, это не email. Пожалуйста, отправьте email ещё раз сообщением ниже.");
+    if (isSupportAgent(ctx) && msgText.startsWith("/")) {
+      const match = msgText.match(/^\/(support_reply|reply)\s+(\d+)\s+([\s\S]+)$/);
+      if (!match) {
+        await ctx.reply("⚠️ Неверный формат. Используйте: /support_reply <user_id> <текст ответа>");
         return;
       }
-      const contact = msgText;
-      setState(userId, {
-        supportContact: contact,
-        supportContactType: "email",
-        step: "support_confirm_contact",
-      });
-
-      await ctx.reply(textTemplates.supportConfirmContact(contact), {
-        parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "✅ Подтвердить", callback_data: "SUPPORT_CONFIRM_CONTACT" }],
-            [{ text: "✏️ Изменить", callback_data: "SUPPORT_CHANGE_CONTACT" }],
-            [{ text: "⬅️ В меню", callback_data: "MENU_HOME" }],
-          ],
-        },
-      });
-      return;
-    }
-
-    // --- SUPPORT: entering tg username manually ---
-    if (st.step === "wait_support_tg") {
-      if (!isValidTgUsername(msgText)) {
-        await ctx.reply("❗ Отправьте Telegram username в формате @username (латиница/цифры/подчёркивания).");
+      const targetUserId = Number(match[2]);
+      const replyText = match[3].trim();
+      if (!replyText) {
+        await ctx.reply("⚠️ Добавьте текст ответа после user_id.");
         return;
       }
-      const contact = normTgUsername(msgText);
-      setState(userId, {
-        supportContact: contact,
-        supportContactType: "tg",
-        step: "support_confirm_contact",
-      });
-
-      await ctx.reply(textTemplates.supportConfirmContact(contact), {
-        parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "✅ Подтвердить", callback_data: "SUPPORT_CONFIRM_CONTACT" }],
-            [{ text: "✏️ Изменить", callback_data: "SUPPORT_CHANGE_CONTACT" }],
-            [{ text: "⬅️ В меню", callback_data: "MENU_HOME" }],
-          ],
-        },
-      });
+      try {
+        await bot.telegram.sendMessage(targetUserId, textTemplates.supportReplyFromAgent(replyText), {
+          parse_mode: "HTML",
+        });
+        await ctx.reply("✅ Ответ отправлен пользователю.");
+      } catch (e) {
+        console.error("❌ sendSupportReply failed:", {
+          message: e?.message,
+          code: e?.code,
+          response: e?.response,
+          stack: e?.stack,
+        });
+        await ctx.reply("⚠️ Не удалось отправить ответ пользователю. Проверьте user_id.");
+      }
       return;
     }
 
     // --- SUPPORT: final message to send ---
+    if (st.step === "support_contact" || st.step === "support_contact_custom") {
+      const contact = msgText || "не указан";
+      setState(userId, { step: "wait_support_message", supportContact: contact, supportContactType: "custom" });
+      await ctx.reply(textTemplates.supportReadyToMessage, {
+        parse_mode: "HTML",
+        ...mainMenuKeyboard(),
+      });
+      return;
+    }
+
     if (st.step === "wait_support_message" || st.step === "support_ready_to_message") {
       setState(userId, { step: "idle" });
 
-      const contact = st.supportContact || "не указан";
-      const contactType = st.supportContactType || "unknown";
-
-      const hasEmailConfig =
-        !!process.env.SMTP_HOST && !!process.env.SMTP_PORT && !!process.env.SMTP_USER && !!process.env.SMTP_PASS;
-      if (!hasEmailConfig) {
+      if (!SUPPORT_TARGET) {
         await ctx.reply("⚠️ Поддержка временно недоступна. Пожалуйста, попробуйте позже.", {
           parse_mode: "HTML",
           ...mainMenuKeyboard(),
@@ -106,34 +92,47 @@ export default function callbackHandler(bot, pool) {
         return;
       }
 
-      const subject = `HAIRbot Support | user_id=${userId}`;
-      const text =
-        `User ID: ${userId}\n` +
-        `Contact type: ${contactType}\n` +
-        `Contact: ${contact}\n\n` +
-        `Message:\n${msgText}\n`;
+      const contact = st.supportContact || "не указан";
+      const createdAt = new Date().toLocaleString("ru-RU");
+      const text = [
+        "🆘 Новое обращение в поддержку",
+        `User ID: ${userId}`,
+        `Контакт для обратной связи: ${contact}`,
+        `Тариф: ${st.plan || "не выбран"}`,
+        `Дата: ${createdAt}`,
+        "",
+        "Сообщение:",
+        msgText,
+        "",
+        `Ответить: /support_reply ${userId} <текст ответа>`,
+      ].join("\n");
 
       try {
         await withTimeout(
-          sendSupportEmail({ subject, text }),
-          SUPPORT_EMAIL_TIMEOUT_MS,
-          "Support email send timed out"
+          bot.telegram.sendMessage(SUPPORT_TARGET, text),
+          SUPPORT_MESSAGE_TIMEOUT_MS,
+          "Support message send timed out"
         );
-        await ctx.reply("✅ Сообщение отправлено в поддержку.", {
+        await ctx.reply(textTemplates.supportThanks, {
           parse_mode: "HTML",
           ...mainMenuKeyboard(),
         });
       } catch (e) {
-        console.error("❌ sendSupportEmail failed:", {
+        console.error("❌ sendSupportMessage failed:", {
           message: e?.message,
           code: e?.code,
           response: e?.response,
           stack: e?.stack,
         });
-        await ctx.reply("✅ Сообщение принято. Если письмо не дойдёт — мы свяжемся с вами в Telegram.", {
-          parse_mode: "HTML",
-          ...mainMenuKeyboard(),
-        });
+        await ctx.reply(
+          textTemplates.supportThanksFallback(
+            getSupportLinkHtml()
+          ),
+          {
+            parse_mode: "HTML",
+            ...mainMenuKeyboard(),
+          }
+        );
       }
       return;
     }
@@ -144,6 +143,9 @@ export default function callbackHandler(bot, pool) {
     const userId = ctx.from?.id;
     const data = ctx.callbackQuery?.data;
     if (!userId || !data) return;
+    const supportLink = getSupportLinkHtml();
+    const supportMenuLink = getSupportMenuLinkHtml();
+    const offerUrl = (process.env.PUBLIC_OFFER_URL || process.env.OFFER_URL || "").trim();
 
     try {
       await ctx.answerCbQuery();
@@ -227,15 +229,34 @@ export default function callbackHandler(bot, pool) {
 
     // ---------------- STANDALONE PRIVACY / PAYMENTS ----------------
     if (data === "MENU_PRIVACY") {
-      await safeEdit(textTemplates.privacyStandalone, backToMenuKb);
+      await safeEdit(textTemplates.privacyStandalone(supportMenuLink), backToMenuKb);
       return;
     }
     if (data === "MENU_PAYMENTS") {
-      await safeEdit(textTemplates.paymentsStandalone, backToMenuKb);
+      await safeEdit(textTemplates.paymentsStandalone(supportMenuLink), backToMenuKb);
       return;
     }
     if (data === "MENU_OFFER") {
-      await safeEdit(textTemplates.offer, backToMenuKb);
+      const shouldShowContinue = Boolean(
+        (getState(userId).plan === "pro" || getState(userId).plan === "premium") &&
+          getState(userId).consentPd &&
+          getState(userId).consentThird
+      );
+      const baseOffer = textTemplates.offer({ supportLink: supportMenuLink, offerUrl });
+      const offerHtml = shouldShowContinue
+        ? `${baseOffer}\n\nНажимая «Продолжить», вы подтверждаете согласие с условиями публичной оферты.`
+        : baseOffer;
+      const offerKeyboard = shouldShowContinue
+        ? {
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "Продолжить", callback_data: "OFFER_ACCEPT" }],
+                [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+              ],
+            },
+          }
+        : backToMenuKb;
+      await safeEdit(offerHtml, offerKeyboard);
       return;
     }
     if (data === "MENU_FAQ") {
@@ -296,71 +317,40 @@ export default function callbackHandler(bot, pool) {
 
     // ---------------- SUPPORT ----------------
     if (data === "MENU_SUPPORT") {
-      setState(userId, {
-        step: "support_choose_channel",
-        supportContact: null,
-        supportContactType: null,
-      });
-      await safeEdit(textTemplates.supportStart, {
+      setState(userId, { step: "support_contact", supportContact: null, supportContactType: null });
+      const supportLink = SUPPORT_TG_LINK ? `<a href="${SUPPORT_TG_LINK}">написать в поддержку</a>` : "";
+      const username = ctx.from?.username ? `@${ctx.from.username}` : null;
+      const keyboard = [
+        ...(username ? [[{ text: `✅ Использовать ${username}`, callback_data: "SUPPORT_USE_USERNAME" }]] : []),
+        [{ text: "✍️ Указать другой контакт", callback_data: "SUPPORT_ENTER_CONTACT" }],
+        ...(SUPPORT_TG_LINK ? [[{ text: "💬 Написать в поддержку", url: SUPPORT_TG_LINK }]] : []),
+        [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+      ];
+      await safeEdit(textTemplates.supportContactPrompt(username, supportLink), {
         reply_markup: {
-          inline_keyboard: [
-            [{ text: "💬 Ответ в Telegram", callback_data: "SUPPORT_CHOOSE_TG" }],
-            [{ text: "📩 Ответ на Email", callback_data: "SUPPORT_CHOOSE_EMAIL" }],
-            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-          ],
+          inline_keyboard: keyboard,
         },
       });
       return;
     }
 
-    if (data === "SUPPORT_CHOOSE_TG") {
-      const username = ctx.from?.username ? `@${ctx.from.username}` : "";
-      if (username) {
-        setState(userId, {
-          supportContactType: "tg",
-          supportContact: username,
-          step: "support_confirm_contact",
-        });
-        await safeEdit(textTemplates.supportConfirmContact(username), {
+    if (data === "SUPPORT_USE_USERNAME") {
+      const username = ctx.from?.username ? `@${ctx.from.username}` : null;
+      if (!username) {
+        setState(userId, { step: "support_contact_custom" });
+        await safeEdit(textTemplates.supportContactCustomPrompt, {
           reply_markup: {
-            inline_keyboard: [
-              [{ text: "✅ Подтвердить", callback_data: "SUPPORT_CONFIRM_CONTACT" }],
-              [{ text: "✏️ Изменить", callback_data: "SUPPORT_CHANGE_CONTACT" }],
-              [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-            ],
+            inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
           },
         });
-      } else {
-        setState(userId, { supportContactType: "tg", supportContact: null, step: "wait_support_tg" });
-        await ctx.reply(textTemplates.supportAskTg, { parse_mode: "HTML", ...mainMenuKeyboard() });
+        return;
       }
-      return;
-    }
-
-    if (data === "SUPPORT_CHOOSE_EMAIL") {
-      setState(userId, { supportContactType: "email", supportContact: null, step: "wait_support_email" });
-      await ctx.reply(textTemplates.supportAskEmail, { parse_mode: "HTML", ...mainMenuKeyboard() });
-      return;
-    }
-
-    if (data === "SUPPORT_CHANGE_CONTACT") {
-      setState(userId, { step: "support_choose_channel", supportContact: null, supportContactType: null });
-      await safeEdit(textTemplates.supportStart, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "💬 Ответ в Telegram", callback_data: "SUPPORT_CHOOSE_TG" }],
-            [{ text: "📩 Ответ на Email", callback_data: "SUPPORT_CHOOSE_EMAIL" }],
-            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-          ],
-        },
+      setState(userId, {
+        step: "wait_support_message",
+        supportContact: username,
+        supportContactType: "username_confirmed",
       });
-      return;
-    }
-
-    if (data === "SUPPORT_CONFIRM_CONTACT") {
-      setState(userId, { step: "wait_support_message" });
-      await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
-        parse_mode: "HTML",
+      await safeEdit(textTemplates.supportReadyToMessage, {
         reply_markup: {
           inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
         },
@@ -368,16 +358,16 @@ export default function callbackHandler(bot, pool) {
       return;
     }
 
-    if (data === "SUPPORT_SEND_MESSAGE") {
-      setState(userId, { step: "wait_support_message" });
-      await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
-        parse_mode: "HTML",
+    if (data === "SUPPORT_ENTER_CONTACT") {
+      setState(userId, { step: "support_contact_custom" });
+      await safeEdit(textTemplates.supportContactCustomPrompt, {
         reply_markup: {
           inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
         },
       });
       return;
     }
+
     // ---------------- CONSENT FLOW HELPERS ----------------
     const showConsentMenu = async () => {
       const st = getState(userId);
@@ -409,7 +399,7 @@ export default function callbackHandler(bot, pool) {
       });
     };
 
-    const goToPaymentScreen = async () => {
+    const goToOfferScreen = async () => {
       const st = getState(userId);
       const plan = st.plan; // "pro" | "premium"
       if (plan !== "pro" && plan !== "premium") {
@@ -420,35 +410,20 @@ export default function callbackHandler(bot, pool) {
         });
         return;
       }
-      const planLabel = plan === "premium" ? "PREMIUM" : "PRO";
-
-      const url = plan === "premium" ? process.env.YOOMONEY_PAY_URL_PREMIUM : process.env.YOOMONEY_PAY_URL_PRO;
-      const offerUrl = (process.env.PUBLIC_OFFER_URL || process.env.OFFER_URL || "").trim();
-
-      const html =
-        `${textTemplates.paymentInfoCommon}\n\n` +
-        `<b>Выбран тариф:</b> ${planLabel}\n` +
-        (url ? "\nНажмите кнопку ниже, чтобы перейти к оплате." : "\n⚠️ Ссылка оплаты не настроена.") +
-        "\n\nНажимая «Продолжить», вы подтверждаете согласие с условиями публичной оферты.";
-
-      await safeEdit(html, {
+      setState(userId, { offerAccepted: false });
+      const baseOffer = textTemplates.offer({ supportLink: supportMenuLink, offerUrl });
+      const offerHtml = `${baseOffer}\n\nНажимая «Продолжить», вы подтверждаете согласие с условиями публичной оферты.`;
+      await safeEdit(offerHtml, {
         reply_markup: {
           inline_keyboard: [
-            ...(url
-              ? [[{ text: "Продолжить", callback_data: "PAY_CONTINUE" }]]
-              : []),
-            [
-              offerUrl
-                ? { text: "📄 Публичная оферта", url: offerUrl }
-                : { text: "📄 Публичная оферта", callback_data: "MENU_OFFER" },
-            ],
+            [{ text: "Продолжить", callback_data: "OFFER_ACCEPT" }],
             [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
           ],
         },
       });
     };
 
-    const showPaymentButton = async () => {
+    const showPaymentStub = async () => {
       const st = getState(userId);
       const plan = st.plan;
       if (plan !== "pro" && plan !== "premium") {
@@ -460,26 +435,10 @@ export default function callbackHandler(bot, pool) {
         return;
       }
       const planLabel = plan === "premium" ? "PREMIUM" : "PRO";
-      const url = plan === "premium" ? process.env.YOOMONEY_PAY_URL_PREMIUM : process.env.YOOMONEY_PAY_URL_PRO;
-      const offerUrl = (process.env.PUBLIC_OFFER_URL || process.env.OFFER_URL || "").trim();
-
-      const html =
-        `${textTemplates.paymentInfoCommon}\n\n` +
-        `<b>Выбран тариф:</b> ${planLabel}\n` +
-        (url ? "\nНажмите кнопку ниже, чтобы перейти к оплате." : "\n⚠️ Ссылка оплаты не настроена.") +
-        "\n\nНажимая кнопку оплаты, вы принимаете условия публичной оферты со ссылкой на отдельную страницу с документом.";
-
+      const html = `${textTemplates.paymentStub}\n\n<b>Выбран тариф:</b> ${planLabel}`;
       await safeEdit(html, {
         reply_markup: {
-          inline_keyboard: [
-            ...(url ? [[{ text: "💳 Оплатить в ЮMoney", url }]] : []),
-            [
-              offerUrl
-                ? { text: "📄 Публичная оферта", url: offerUrl }
-                : { text: "📄 Публичная оферта", callback_data: "MENU_OFFER" },
-            ],
-            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-          ],
+          inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
         },
       });
     };
@@ -501,26 +460,26 @@ export default function callbackHandler(bot, pool) {
 
     // ---------------- PAYMENT START ----------------
     if (data === "PAY_START_PRO" || data === "PAY_START_PREMIUM") {
-      setState(userId, { plan: data === "PAY_START_PREMIUM" ? "premium" : "pro", paid: false });
+      setState(userId, { plan: data === "PAY_START_PREMIUM" ? "premium" : "pro", paid: false, offerAccepted: false });
 
       const st = getState(userId);
       if (st.consentPd && st.consentThird) {
-        await goToPaymentScreen();
+        await goToOfferScreen();
       } else {
         setState(userId, { step: "consent_flow" });
         await showConsentMenu();
       }
       return;
     }
-
-    if (data === "PAY_CONTINUE") {
-      await showPaymentButton();
+    if (data === "OFFER_ACCEPT") {
+      setState(userId, { offerAccepted: true });
+      await showPaymentStub();
       return;
     }
 
     // ---------------- PRIVACY IN FLOW ----------------
     if (data === "PRIVACY_IN_FLOW") {
-      await safeEdit(textTemplates.privacyInConsentFlow, {
+      await safeEdit(textTemplates.privacyInConsentFlow(supportMenuLink), {
         reply_markup: {
           inline_keyboard: [[{ text: "Далее к соглашениям", callback_data: "CONSENT_MENU" }]],
         },
@@ -564,7 +523,7 @@ export default function callbackHandler(bot, pool) {
       if (st.consentPd && st.consentThird) {
         acceptAllConsents(userId);
         if (st.plan === "pro" || st.plan === "premium") {
-          await goToPaymentScreen();
+          await goToOfferScreen();
         } else {
           await safeEdit("✅ Согласия приняты. Теперь отправьте фото сообщением в этот чат.", {
             reply_markup: {
@@ -584,7 +543,7 @@ export default function callbackHandler(bot, pool) {
       if (st.consentPd && st.consentThird) {
         acceptAllConsents(userId);
         if (st.plan === "pro" || st.plan === "premium") {
-          await goToPaymentScreen();
+          await goToOfferScreen();
         } else {
           await safeEdit("✅ Согласия приняты. Теперь отправьте фото сообщением в этот чат.", {
             reply_markup: {

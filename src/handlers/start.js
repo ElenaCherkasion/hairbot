@@ -1,9 +1,23 @@
 // src/handlers/start.js
 import textTemplates from "../utils/text-templates.js";
 import { mainMenuKeyboard } from "../keyboards/main.js";
-import { setState } from "../utils/storage.js";
+import { getState, setState } from "../utils/storage.js";
 
-export default function startHandler(bot) {
+export default function startHandler(bot, restartState) {
+  bot.use(async (ctx, next) => {
+    const userId = ctx.from?.id;
+    if (userId && restartState?.id) {
+      const st = getState(userId);
+      if (st.restartNoticeSeenId !== restartState.id) {
+        setState(userId, { restartNoticeSeenId: restartState.id });
+        await ctx.reply(textTemplates.restartNotice(restartState.reason), {
+          parse_mode: "HTML",
+        });
+      }
+    }
+    return next();
+  });
+
   bot.start(async (ctx) => {
     const userId = ctx.from?.id;
     if (userId) setState(userId, { step: "idle" });
