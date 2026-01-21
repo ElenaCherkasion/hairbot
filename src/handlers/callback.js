@@ -112,7 +112,11 @@ export default function callbackHandler(bot, pool) {
 
       try {
         await sendSupportEmail({ subject, text });
-        await ctx.reply(textTemplates.supportThanks, {
+        await ctx.reply("✅ Сообщение отправлено.", {
+          parse_mode: "HTML",
+          ...mainMenuKeyboard(),
+        });
+        await ctx.reply("✅ Сообщение доставлено.", {
           parse_mode: "HTML",
           ...mainMenuKeyboard(),
         });
@@ -411,6 +415,45 @@ export default function callbackHandler(bot, pool) {
       const planLabel = plan === "premium" ? "PREMIUM" : "PRO";
 
       const url = plan === "premium" ? process.env.YOOMONEY_PAY_URL_PREMIUM : process.env.YOOMONEY_PAY_URL_PRO;
+      const offerUrl = (process.env.PUBLIC_OFFER_URL || process.env.OFFER_URL || "").trim();
+
+      const html =
+        `${textTemplates.paymentInfoCommon}\n\n` +
+        `<b>Выбран тариф:</b> ${planLabel}\n` +
+        (url ? "\nНажмите кнопку ниже, чтобы перейти к оплате." : "\n⚠️ Ссылка оплаты не настроена.") +
+        "\n\nНажимая «Продолжить», вы подтверждаете согласие с условиями публичной оферты.";
+
+      await safeEdit(html, {
+        reply_markup: {
+          inline_keyboard: [
+            ...(url
+              ? [[{ text: "Продолжить", callback_data: "PAY_CONTINUE" }]]
+              : []),
+            [
+              offerUrl
+                ? { text: "📄 Публичная оферта", url: offerUrl }
+                : { text: "📄 Публичная оферта", callback_data: "MENU_OFFER" },
+            ],
+            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+          ],
+        },
+      });
+    };
+
+    const showPaymentButton = async () => {
+      const st = getState(userId);
+      const plan = st.plan;
+      if (plan !== "pro" && plan !== "premium") {
+        await safeEdit("⚠️ Не удалось продолжить оформление. Пожалуйста, начните с выбора тарифа.", {
+          reply_markup: {
+            inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
+          },
+        });
+        return;
+      }
+      const planLabel = plan === "premium" ? "PREMIUM" : "PRO";
+      const url = plan === "premium" ? process.env.YOOMONEY_PAY_URL_PREMIUM : process.env.YOOMONEY_PAY_URL_PRO;
+      const offerUrl = (process.env.PUBLIC_OFFER_URL || process.env.OFFER_URL || "").trim();
 
       const html =
         `${textTemplates.paymentInfoCommon}\n\n` +
@@ -422,7 +465,11 @@ export default function callbackHandler(bot, pool) {
         reply_markup: {
           inline_keyboard: [
             ...(url ? [[{ text: "💳 Оплатить в ЮMoney", url }]] : []),
-            [{ text: "📄 Публичная оферта", callback_data: "MENU_OFFER" }],
+            [
+              offerUrl
+                ? { text: "📄 Публичная оферта", url: offerUrl }
+                : { text: "📄 Публичная оферта", callback_data: "MENU_OFFER" },
+            ],
             [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
           ],
         },
@@ -455,6 +502,11 @@ export default function callbackHandler(bot, pool) {
         setState(userId, { step: "consent_flow" });
         await showConsentMenu();
       }
+      return;
+    }
+
+    if (data === "PAY_CONTINUE") {
+      await showPaymentButton();
       return;
     }
 
