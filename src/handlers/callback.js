@@ -133,14 +133,23 @@ export default function callbackHandler(bot, pool) {
     const data = ctx.callbackQuery?.data;
     if (!userId || !data) return;
 
-    await ctx.answerCbQuery();
+    try {
+      await ctx.answerCbQuery();
+    } catch (error) {
+      await ctx.reply(textTemplates.stuckInstruction, mainMenuKeyboard());
+      return;
+    }
 
     const safeEdit = async (html, extra) => {
       const payload = { parse_mode: "HTML", ...(extra || mainMenuKeyboard()) };
       try {
         await ctx.editMessageText(html, payload);
       } catch {
-        await ctx.reply(html, payload);
+        try {
+          await ctx.reply(html, payload);
+        } catch {
+          await ctx.reply(textTemplates.stuckInstruction, mainMenuKeyboard());
+        }
       }
     };
 
@@ -211,6 +220,10 @@ export default function callbackHandler(bot, pool) {
     }
     if (data === "MENU_PAYMENTS") {
       await safeEdit(textTemplates.paymentsStandalone, backToMenuKb);
+      return;
+    }
+    if (data === "MENU_FAQ") {
+      await safeEdit(textTemplates.faq, backToMenuKb);
       return;
     }
 
