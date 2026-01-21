@@ -29,6 +29,12 @@ function getTransporter() {
     port,
     secure,
     auth: { user, pass },
+    connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT_MS || 10000),
+    greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT_MS || 10000),
+    socketTimeout: Number(process.env.SMTP_SOCKET_TIMEOUT_MS || 10000),
+    tls: {
+      rejectUnauthorized: boolEnv("SMTP_TLS_REJECT_UNAUTHORIZED", false),
+    },
   });
 
   return cachedTransporter;
@@ -37,11 +43,12 @@ function getTransporter() {
 export async function sendSupportEmail({ subject, text }) {
   const to = (process.env.SUPPORT_TO_EMAIL || process.env.SMTP_USER || "cherkashina720@gmail.com").trim();
 
-  const fromUser = (process.env.SMTP_USER || "").trim();
+  const fromUser =
+    (process.env.SUPPORT_FROM_EMAIL || process.env.SMTP_USER || process.env.SUPPORT_TO_EMAIL || "").trim();
 
   const transporter = getTransporter();
   return transporter.sendMail({
-    from: `HAIRbot <${fromUser}>`,
+    from: fromUser ? `HAIRbot <${fromUser}>` : "HAIRbot",
     to,
     subject,
     text,

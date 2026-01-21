@@ -11,6 +11,9 @@ import {
   getNextFreeTariffAt,
 } from "../utils/storage.js";
 import { sendSupportEmail } from "../utils/mailer.js";
+import { withTimeout } from "../utils/with-timeout.js";
+
+const SUPPORT_EMAIL_TIMEOUT_MS = Number(process.env.SUPPORT_EMAIL_TIMEOUT_MS || 10000);
 
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
@@ -111,7 +114,11 @@ export default function callbackHandler(bot, pool) {
         `Message:\n${msgText}\n`;
 
       try {
-        await sendSupportEmail({ subject, text });
+        await withTimeout(
+          sendSupportEmail({ subject, text }),
+          SUPPORT_EMAIL_TIMEOUT_MS,
+          "Support email send timed out"
+        );
         await ctx.reply("✅ Сообщение отправлено.", {
           parse_mode: "HTML",
           ...mainMenuKeyboard(),
