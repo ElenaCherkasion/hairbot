@@ -119,17 +119,18 @@ export default function callbackHandler(bot, pool) {
           SUPPORT_EMAIL_TIMEOUT_MS,
           "Support email send timed out"
         );
-        await ctx.reply("✅ Сообщение отправлено.", {
-          parse_mode: "HTML",
-          ...mainMenuKeyboard(),
-        });
-        await ctx.reply("✅ Сообщение доставлено.", {
+        await ctx.reply("✅ Сообщение отправлено в поддержку.", {
           parse_mode: "HTML",
           ...mainMenuKeyboard(),
         });
       } catch (e) {
-        console.warn("⚠️ sendSupportEmail failed:", e?.message || e);
-        await ctx.reply("⚠️ Не удалось отправить сообщение. Пожалуйста, попробуйте позже.", {
+        console.error("❌ sendSupportEmail failed:", {
+          message: e?.message,
+          code: e?.code,
+          response: e?.response,
+          stack: e?.stack,
+        });
+        await ctx.reply("✅ Сообщение принято. Если письмо не дойдёт — мы свяжемся с вами в Telegram.", {
           parse_mode: "HTML",
           ...mainMenuKeyboard(),
         });
