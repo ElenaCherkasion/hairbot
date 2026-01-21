@@ -106,8 +106,32 @@ export async function startBot() {
       console.warn("⚠️ deleteWebhook failed (can ignore):", e?.message || e);
     }
 
-    await bot.launch();
-    console.log("✅ Bot launched (polling)");
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const isConflictError = (err) => err?.response?.error_code === 409;
+    const isTimeoutError = (err) =>
+      err?.name === "TimeoutError" || String(err?.message || "").includes("Promise timed out");
+
+    while (true) {
+      try {
+        await bot.launch();
+        console.log("✅ Bot launched (polling)");
+        break;
+      } catch (e) {
+        if (isConflictError(e)) {
+          console.warn(
+            "⚠️ Polling conflict detected (another instance is running). Retrying in 10s..."
+          );
+          await sleep(10000);
+          continue;
+        }
+        if (isTimeoutError(e)) {
+          console.warn("⚠️ Polling timed out. Retrying in 10s...");
+          await sleep(10000);
+          continue;
+        }
+        throw e;
+      }
+    }
   }
 
   process.once("SIGINT", async () => {
