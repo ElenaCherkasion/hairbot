@@ -37,8 +37,7 @@ export default function callbackHandler(bot, pool) {
         return;
       }
 
-      const username = ctx.from?.username ? `@${ctx.from.username}` : "скрыт";
-      const text = `User: ${username}\nID: ${userId}\n\nMessage:\n${msgText}\n`;
+      const text = `User ID: ${userId}\n\nMessage:\n${msgText}\n`;
 
       try {
         await withTimeout(

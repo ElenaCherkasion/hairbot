@@ -13,6 +13,7 @@ function ensure(userId) {
       consentThird: false,
       supportContact: null,
       supportContactType: null,
+      restartNoticeSeenId: 0,
     });
   }
   return STORE.get(userId);
