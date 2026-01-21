@@ -14,6 +14,7 @@ import { withTimeout } from "../utils/with-timeout.js";
 
 const SUPPORT_MESSAGE_TIMEOUT_MS = Number(process.env.SUPPORT_MESSAGE_TIMEOUT_MS || 10000);
 const SUPPORT_CHAT_ID = process.env.SUPPORT_CHAT_ID;
+const SUPPORT_CHAT_ID_NUM = SUPPORT_CHAT_ID ? Number(SUPPORT_CHAT_ID) : null;
 const SUPPORT_TG_LINK = process.env.SUPPORT_TG_LINK || "";
 const SUPPORT_MENU_LINK = (process.env.SUPPORT_MENU_LINK || "").trim();
 const SUPPORT_AGENT_USERNAME = (process.env.SUPPORT_AGENT_USERNAME || "le_cherk").replace(/^@/, "");
@@ -27,10 +28,51 @@ export default function callbackHandler(bot, pool) {
     SUPPORT_MENU_LINK
       ? `<a href="${SUPPORT_MENU_LINK}">пункт меню «🆘 Поддержка»</a>`
       : "пункт меню «🆘 Поддержка»";
+  const buildSupportMessage = ({ userId, username, message, contact, plan, createdAt }) =>
+    [
+      "🆘 SUPPORT",
+      "",
+      "User:",
+      username || "не указан",
+      `ID: ${userId}`,
+      "",
+      "Message:",
+      message,
+      "",
+      `Контакт для обратной связи: ${contact || "не указан"}`,
+      `Тариф: ${plan || "не выбран"}`,
+      `Дата: ${createdAt}`,
+      "",
+      `Ответить: /support_reply ${userId} <текст ответа>`,
+    ].join("\n");
   const isSupportAgent = (ctx) => {
     if (SUPPORT_AGENT_ID && ctx.from?.id === SUPPORT_AGENT_ID) return true;
     if (SUPPORT_AGENT_USERNAME && ctx.from?.username === SUPPORT_AGENT_USERNAME) return true;
     return false;
+  };
+  const isSupportSender = (ctx) => {
+    if (SUPPORT_CHAT_ID_NUM && ctx.chat?.id === SUPPORT_CHAT_ID_NUM) return true;
+    return isSupportAgent(ctx);
+  };
+  const notifyUserDelivery = async (userId, message, ctx) => {
+    try {
+      await bot.telegram.sendMessage(userId, message, {
+        parse_mode: "HTML",
+        ...mainMenuKeyboard(),
+      });
+      return;
+    } catch (error) {
+      console.error("❌ notifyUserDelivery failed:", {
+        message: error?.message,
+        code: error?.code,
+        response: error?.response,
+        stack: error?.stack,
+      });
+    }
+    await ctx.reply(message, {
+      parse_mode: "HTML",
+      ...mainMenuKeyboard(),
+    });
   };
 
   // ====== TEXT INPUT HANDLER (support message) ======
@@ -41,7 +83,7 @@ export default function callbackHandler(bot, pool) {
     const st = getState(userId);
     const msgText = (ctx.message?.text || "").trim();
 
-    if (isSupportAgent(ctx) && msgText.startsWith("/")) {
+    if (isSupportSender(ctx) && msgText.startsWith("/")) {
       const match = msgText.match(/^\/(support_reply|reply)\s+(\d+)\s+([\s\S]+)$/);
       if (!match) {
         await ctx.reply("⚠️ Неверный формат. Используйте: /support_reply <user_id> <текст ответа>");
@@ -94,18 +136,15 @@ export default function callbackHandler(bot, pool) {
 
       const contact = st.supportContact || "не указан";
       const createdAt = new Date().toLocaleString("ru-RU");
-      const text = [
-        "🆘 Новое обращение в поддержку",
-        `User ID: ${userId}`,
-        `Контакт для обратной связи: ${contact}`,
-        `Тариф: ${st.plan || "не выбран"}`,
-        `Дата: ${createdAt}`,
-        "",
-        "Сообщение:",
-        msgText,
-        "",
-        `Ответить: /support_reply ${userId} <текст ответа>`,
-      ].join("\n");
+      const username = ctx.from?.username ? `@${ctx.from.username}` : "не указан";
+      const text = buildSupportMessage({
+        userId,
+        username,
+        message: msgText,
+        contact,
+        plan: st.plan,
+        createdAt,
+      });
 
       try {
         await withTimeout(
@@ -113,10 +152,8 @@ export default function callbackHandler(bot, pool) {
           SUPPORT_MESSAGE_TIMEOUT_MS,
           "Support message send timed out"
         );
-        await ctx.reply(textTemplates.supportThanks, {
-          parse_mode: "HTML",
-          ...mainMenuKeyboard(),
-        });
+        setState(userId, { supportMode: true });
+        await notifyUserDelivery(userId, textTemplates.supportThanks, ctx);
       } catch (e) {
         console.error("❌ sendSupportMessage failed:", {
           message: e?.message,
@@ -124,14 +161,52 @@ export default function callbackHandler(bot, pool) {
           response: e?.response,
           stack: e?.stack,
         });
-        await ctx.reply(
-          textTemplates.supportThanksFallback(
-            getSupportLinkHtml()
-          ),
-          {
-            parse_mode: "HTML",
-            ...mainMenuKeyboard(),
-          }
+        await notifyUserDelivery(
+          userId,
+          textTemplates.supportThanksFallback(getSupportLinkHtml()),
+          ctx
+        );
+      }
+      return;
+    }
+
+    if (st.supportMode) {
+      if (!SUPPORT_TARGET) {
+        await ctx.reply("⚠️ Поддержка временно недоступна. Пожалуйста, попробуйте позже.", {
+          parse_mode: "HTML",
+          ...mainMenuKeyboard(),
+        });
+        return;
+      }
+      const contact = st.supportContact || "не указан";
+      const createdAt = new Date().toLocaleString("ru-RU");
+      const username = ctx.from?.username ? `@${ctx.from.username}` : "не указан";
+      const text = buildSupportMessage({
+        userId,
+        username,
+        message: msgText,
+        contact,
+        plan: st.plan,
+        createdAt,
+      });
+      try {
+        await withTimeout(
+          bot.telegram.sendMessage(SUPPORT_TARGET, text),
+          SUPPORT_MESSAGE_TIMEOUT_MS,
+          "Support message send timed out"
+        );
+        await notifyUserDelivery(userId, textTemplates.supportMessageDelivered, ctx);
+      } catch (e) {
+        console.error("❌ sendSupportFollowup failed:", {
+          message: e?.message,
+          code: e?.code,
+          response: e?.response,
+          stack: e?.stack,
+        });
+        await notifyUserDelivery(
+          userId,
+          textTemplates.supportThanksFallback(getSupportLinkHtml()),
+          ctx
         );
       }
       return;
