@@ -34,6 +34,7 @@ export function mainMenuKeyboard() {
           { text: "🗑 Удалить мои данные", callback_data: "MENU_DELETE" },
           { text: "💳 Оплата и возврат", callback_data: "MENU_PAYMENTS" },
         ],
+        [{ text: "🗑 Удалить мои данные", callback_data: "MENU_DELETE" }],
       ],
     },
   };
