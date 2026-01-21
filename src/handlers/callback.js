@@ -87,7 +87,7 @@ export default function callbackHandler(bot, pool) {
     }
 
     // --- SUPPORT: final message to send ---
-    if (st.step === "wait_support_message") {
+    if (st.step === "wait_support_message" || st.step === "support_ready_to_message") {
       setState(userId, { step: "idle" });
 
       const contact = st.supportContact || "не указан";
@@ -346,13 +346,11 @@ export default function callbackHandler(bot, pool) {
     }
 
     if (data === "SUPPORT_CONFIRM_CONTACT") {
-      setState(userId, { step: "support_ready_to_message" });
-      await safeEdit(textTemplates.supportSendMessageHint, {
+      setState(userId, { step: "wait_support_message" });
+      await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
+        parse_mode: "HTML",
         reply_markup: {
-          inline_keyboard: [
-            [{ text: "✉️ Отправить сообщение", callback_data: "SUPPORT_SEND_MESSAGE" }],
-            [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-          ],
+          inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]],
         },
       });
       return;
@@ -360,7 +358,6 @@ export default function callbackHandler(bot, pool) {
 
     if (data === "SUPPORT_SEND_MESSAGE") {
       setState(userId, { step: "wait_support_message" });
-
       await ctx.reply("Напишите ваше сообщение <b>сообщением ниже</b>.", {
         parse_mode: "HTML",
         reply_markup: {
