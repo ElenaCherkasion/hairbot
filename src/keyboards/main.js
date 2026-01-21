@@ -30,7 +30,10 @@ export function mainMenuKeyboard() {
           { text: "🆘 Поддержка", callback_data: "MENU_SUPPORT" },
           { text: "❓ FAQ", callback_data: "MENU_FAQ" },
         ],
-        [{ text: "💳 Оплата и возврат", callback_data: "MENU_PAYMENTS" }],
+        [
+          { text: "🗑 Удалить мои данные", callback_data: "MENU_DELETE" },
+          { text: "💳 Оплата и возврат", callback_data: "MENU_PAYMENTS" },
+        ],
       ],
     },
   };
