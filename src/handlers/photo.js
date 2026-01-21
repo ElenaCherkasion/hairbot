@@ -1,6 +1,66 @@
 // src/handlers/photo.js
 import textTemplates from "../utils/text-templates.js";
-import { canAcceptPhoto, getState, setState } from "../utils/storage.js";
+import {
+  canAcceptPhoto,
+  getNextFreeTariffAt,
+  canUseFreeTariff,
+  markFreeTariffUsage,
+  getState,
+  setState,
+} from "../utils/storage.js";
+import { aiService } from "../services/index.js";
+import { withTimeout } from "../utils/with-timeout.js";
+import logger from "../utils/logger.js";
+
+const FILE_LINK_TIMEOUT_MS = Number(process.env.FILE_LINK_TIMEOUT_MS || 8000);
+const ANALYSIS_TIMEOUT_MS = Number(process.env.ANALYSIS_TIMEOUT_MS || 25000);
+
+function formatAnalysisResult(result) {
+  if (!result) {
+    return "⚠️ Не удалось получить результат анализа. Попробуйте позже.";
+  }
+  if (typeof result === "string") {
+    return `✅ Анализ завершен!\n\n${result}`;
+  }
+
+  const faceShape = result.faceShape || "не определен";
+  const recommendations = result.recommendations || "рекомендации недоступны";
+  const confidence = typeof result.confidence === "number" ? `\nУверенность: ${Math.round(result.confidence * 100)}%` : "";
+
+  return `✅ Анализ завершен!\n\nТип лица: ${faceShape}\nРекомендации:\n${recommendations}${confidence}`;
+}
+
+async function processPhoto(ctx) {
+  try {
+    const photo = ctx.message?.photo?.[ctx.message.photo.length - 1];
+    if (!photo?.file_id) {
+      await ctx.reply("⚠️ Не удалось получить фото. Пожалуйста, попробуйте еще раз.");
+      return;
+    }
+
+    const fileLink = await withTimeout(
+      ctx.telegram.getFileLink(photo.file_id),
+      FILE_LINK_TIMEOUT_MS,
+      "Получение ссылки на фото заняло слишком много времени."
+    );
+    const imageUrl = fileLink?.href || String(fileLink || "");
+    if (!imageUrl) {
+      await ctx.reply("⚠️ Не удалось получить ссылку на фото. Пожалуйста, попробуйте еще раз.");
+      return;
+    }
+
+    const analysis = await withTimeout(
+      aiService.analyzeFace(imageUrl),
+      ANALYSIS_TIMEOUT_MS,
+      "Анализ фото занял слишком много времени."
+    );
+
+    await ctx.reply(formatAnalysisResult(analysis));
+  } catch (error) {
+    logger.error(`Ошибка обработки фото: ${error?.message || error}`);
+    await ctx.reply("⚠️ Анализ занимает слишком много времени. Попробуйте позже.");
+  }
+}
 
 export default function photoHandler(bot) {
   bot.on("photo", async (ctx) => {
@@ -58,13 +118,27 @@ export default function photoHandler(bot) {
       return;
     }
 
-    await ctx.reply("🔄 Анализирую ваше фото...\nЭто займет несколько секунд.");
+    if (st.plan === "free" && !canUseFreeTariff(userId)) {
+      const nextAt = getNextFreeTariffAt(userId);
+      const nextText = nextAt
+        ? `Следующая бесплатная попытка будет доступна ${nextAt.toLocaleDateString("ru-RU")}.`
+        : "Следующая бесплатная попытка будет доступна позже.";
+      await ctx.reply(`⚠️ Бесплатный тариф доступен раз в 30 дней.\n${nextText}`);
+      return;
+    }
 
-    setTimeout(async () => {
-      await ctx.reply(
-        "✅ Анализ завершен!\n\nТип лица: Овальное\nРекомендации:\n• Стрижки с объемом на макушке\n• Асимметричные стрижки\n• Каре с челкой"
-      );
-    }, 1200);
+    if (st.plan === "free") {
+      markFreeTariffUsage(userId);
+    }
+
+    await ctx.reply(
+      "Спасибо 🤍\n" +
+        "Я получила фотографию и начинаю анализ.\n\n" +
+        "Это займет немного времени.\n" +
+        "Пока ты можешь просто выдохнуть — здесь не будет неожиданных или резких выводов.\n\n" +
+        "Я напишу, когда все будет готово 🌿"
+    );
+    void processPhoto(ctx);
   });
 
   bot.command("photo", (ctx) => {
