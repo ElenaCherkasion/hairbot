@@ -25,12 +25,14 @@ export function mainMenuKeyboard() {
             ? { text: "📄 Публичная оферта", url: offerUrl }
             : { text: "📄 Публичная оферта", callback_data: "MENU_OFFER" },
         ],
-        [{ text: "💳 Оплата и возврат", callback_data: "MENU_PAYMENTS" }],
-
-        // Поддержка и данные
+        // Поддержка и FAQ
         [
           { text: "🆘 Поддержка", callback_data: "MENU_SUPPORT" },
           { text: "❓ FAQ", callback_data: "MENU_FAQ" },
+        ],
+        [
+          { text: "🗑 Удалить мои данные", callback_data: "MENU_DELETE" },
+          { text: "💳 Оплата и возврат", callback_data: "MENU_PAYMENTS" },
         ],
         [{ text: "🗑 Удалить мои данные", callback_data: "MENU_DELETE" }],
       ],
