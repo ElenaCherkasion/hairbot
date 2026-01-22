@@ -42,6 +42,7 @@ const buildSupportMessage = ({ ticketNumber, userId, username, name, message, co
     "",
     `Контакт для обратной связи: ${contact || "не указан"}`,
     `Тариф: ${plan || "не выбран"}`,
+    `Дата: ${createdAt}`,
     "",
     `Ответить: /support_reply ${userId} <текст ответа>`,
   ].join("\n");
