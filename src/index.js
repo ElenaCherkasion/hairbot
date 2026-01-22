@@ -165,7 +165,7 @@ export async function startBot() {
           try {
             await bot.stop("CONFLICT");
           } catch {}
-          process.exit(1);
+          break;
         }
         if (isTimeoutError(e)) {
           const reason = "истекло время ожидания ответа Telegram";
