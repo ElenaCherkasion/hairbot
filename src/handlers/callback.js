@@ -13,7 +13,11 @@ import {
 import { withTimeout } from "../utils/with-timeout.js";
 
 const SUPPORT_MESSAGE_TIMEOUT_MS = Number(process.env.SUPPORT_MESSAGE_TIMEOUT_MS || 10000);
-const SUPPORT_CHAT_ID = (process.env.SUPPORT_CHAT_ID || "").trim();
+const SUPPORT_CHAT_ID_RAW = process.env.SUPPORT_CHAT_ID ?? "";
+const SUPPORT_CHAT_ID = String(SUPPORT_CHAT_ID_RAW)
+  .trim()
+  .replace(/^["']|["']$/g, "")
+  .replace(/[−–—]/g, "-");
 const SUPPORT_CHAT_ID_NUM = SUPPORT_CHAT_ID && /^-?\d+$/.test(SUPPORT_CHAT_ID) ? Number(SUPPORT_CHAT_ID) : null;
 const SUPPORT_TG_LINK = process.env.SUPPORT_TG_LINK || "";
 const SUPPORT_MENU_LINK = (process.env.SUPPORT_MENU_LINK || "").trim();
@@ -22,15 +26,28 @@ const SUPPORT_AGENT_ID = Number(process.env.SUPPORT_AGENT_ID || 0) || null;
 const SUPPORT_TARGET =
   Number.isFinite(SUPPORT_CHAT_ID_NUM) && SUPPORT_CHAT_ID_NUM < 0 && String(SUPPORT_CHAT_ID).startsWith("-100")
     ? SUPPORT_CHAT_ID_NUM
-    : "";
+    : null;
+const SUPPORT_TARGET_REASON = (() => {
+  if (!SUPPORT_CHAT_ID) return "missing";
+  if (!/^-\d+$/.test(SUPPORT_CHAT_ID)) return "non_numeric";
+  if (!SUPPORT_CHAT_ID.startsWith("-100")) return "not_supergroup";
+  return null;
+})();
 
 export default function callbackHandler(bot, pool) {
   let supportTargetWarned = false;
-  if (!SUPPORT_TARGET && SUPPORT_CHAT_ID) {
-    console.error(
-      "❌ SUPPORT_CHAT_ID must be a supergroup id like -100xxxxxxxxxx. " +
-        "Messages to support will fail until it is corrected."
-    );
+  const supportTargetHint = () => {
+    if (!SUPPORT_TARGET_REASON) return "";
+    if (SUPPORT_TARGET_REASON === "missing") {
+      return "❌ SUPPORT_CHAT_ID is not set. Messages to support will fail until it is configured.";
+    }
+    if (SUPPORT_TARGET_REASON === "non_numeric") {
+      return `❌ SUPPORT_CHAT_ID must be a numeric id like -100xxxxxxxxxx. Received: "${SUPPORT_CHAT_ID_RAW}".`;
+    }
+    return `❌ SUPPORT_CHAT_ID must be a supergroup id like -100xxxxxxxxxx. Received: "${SUPPORT_CHAT_ID_RAW}".`;
+  };
+  if (!SUPPORT_TARGET && SUPPORT_TARGET_REASON) {
+    console.error(supportTargetHint());
   }
   const getSupportLinkHtml = () =>
     SUPPORT_TG_LINK ? `<a href="${SUPPORT_TG_LINK}">написать в поддержку</a>` : "написать в поддержку";
@@ -69,9 +86,7 @@ export default function callbackHandler(bot, pool) {
     if (!SUPPORT_TARGET) {
       if (!supportTargetWarned) {
         supportTargetWarned = true;
-        console.error(
-          "❌ SUPPORT_TARGET not configured. Set SUPPORT_CHAT_ID to a supergroup id like -100xxxxxxxxxx."
-        );
+        console.error(supportTargetHint() || "❌ SUPPORT_TARGET not configured.");
       }
       return { ok: false, reason: "support_target_missing" };
     }
