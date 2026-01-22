@@ -45,6 +45,31 @@ function getWebhookConfig() {
   return { base, path, url: `${base}${path}` };
 }
 
+function startKeepAlive() {
+  const url = (process.env.KEEPALIVE_URL || process.env.WEBHOOK_BASE_URL || "").trim().replace(/\/+$/, "");
+  if (!url) {
+    console.log("ℹ️ KEEPALIVE_URL not set — keepalive disabled");
+    return;
+  }
+  const intervalMs = Number(process.env.KEEPALIVE_INTERVAL_MS || 10 * 60 * 1000);
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    console.log("ℹ️ KEEPALIVE_INTERVAL_MS invalid — keepalive disabled");
+    return;
+  }
+  const healthUrl = `${url}/health`;
+  console.log(`🔁 Keepalive enabled: ${healthUrl} every ${intervalMs}ms`);
+  setInterval(async () => {
+    try {
+      const res = await fetch(healthUrl, { method: "GET" });
+      if (!res.ok) {
+        console.warn(`⚠️ Keepalive non-200: ${res.status} ${healthUrl}`);
+      }
+    } catch (error) {
+      console.warn(`⚠️ Keepalive failed: ${healthUrl}`, error?.message || error);
+    }
+  }, intervalMs).unref();
+}
+
 export async function startBot() {
   console.log("🚀 =================================");
   console.log("🚀 ЗАПУСК HAIRBOT");
@@ -95,10 +120,12 @@ export async function startBot() {
         console.error("❌ Failed to set webhook:", e?.message || e);
       }
     });
+    startKeepAlive();
   } else {
     // POLLING MODE (fallback, если не задан WEBHOOK_BASE_URL)
     console.log("ℹ️ WEBHOOK_BASE_URL not set — using POLLING mode");
     app.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
+    startKeepAlive();
 
     try {
       // на всякий случай очищаем webhook, чтобы polling работал
@@ -130,18 +157,15 @@ export async function startBot() {
       } catch (e) {
         if (isConflictError(e)) {
           const reason = "обнаружен конфликт polling — бот уже запущен в другом месте";
-          console.warn(
-            "⚠️ Polling conflict detected (another instance is running). Retrying in 10s..."
+          restartState.id += 1;
+          restartState.reason = reason;
+          console.error(
+            "❌ Polling conflict: another bot instance is running. Stop the other instance or use webhook mode."
           );
-          await sleep(10000);
           try {
-            await restartAfterWait(reason);
-            break;
-          } catch (restartError) {
-            console.warn("⚠️ Restart after conflict failed. Retrying in 10s...", restartError?.message);
-            await sleep(10000);
-            continue;
-          }
+            await bot.stop("CONFLICT");
+          } catch {}
+          process.exit(1);
         }
         if (isTimeoutError(e)) {
           const reason = "истекло время ожидания ответа Telegram";
