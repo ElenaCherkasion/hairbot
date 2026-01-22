@@ -15,32 +15,35 @@ import { withTimeout } from "../utils/with-timeout.js";
 const SUPPORT_MESSAGE_TIMEOUT_MS = Number(process.env.SUPPORT_MESSAGE_TIMEOUT_MS || 10000);
 const SUPPORT_CHAT_ID = (process.env.SUPPORT_CHAT_ID || "").trim();
 const SUPPORT_CHAT_ID_NUM = SUPPORT_CHAT_ID && /^-?\d+$/.test(SUPPORT_CHAT_ID) ? Number(SUPPORT_CHAT_ID) : null;
-const SUPPORT_CHAT_USERNAME = SUPPORT_CHAT_ID.startsWith("@") ? SUPPORT_CHAT_ID.slice(1) : null;
 const SUPPORT_TG_LINK = process.env.SUPPORT_TG_LINK || "";
 const SUPPORT_MENU_LINK = (process.env.SUPPORT_MENU_LINK || "").trim();
 const SUPPORT_AGENT_USERNAME = (process.env.SUPPORT_AGENT_USERNAME || "le_cherk").replace(/^@/, "");
 const SUPPORT_AGENT_ID = Number(process.env.SUPPORT_AGENT_ID || 0) || null;
-const SUPPORT_TARGET = Number.isFinite(SUPPORT_CHAT_ID_NUM)
-  ? SUPPORT_CHAT_ID_NUM
-  : SUPPORT_CHAT_USERNAME
-    ? `@${SUPPORT_CHAT_USERNAME}`
-    : SUPPORT_AGENT_USERNAME
-      ? `@${SUPPORT_AGENT_USERNAME}`
-      : "";
+const SUPPORT_TARGET =
+  Number.isFinite(SUPPORT_CHAT_ID_NUM) && SUPPORT_CHAT_ID_NUM < 0 && String(SUPPORT_CHAT_ID).startsWith("-100")
+    ? SUPPORT_CHAT_ID_NUM
+    : "";
 
 export default function callbackHandler(bot, pool) {
+  if (!SUPPORT_TARGET && SUPPORT_CHAT_ID) {
+    console.error(
+      "❌ SUPPORT_CHAT_ID must be a supergroup id like -100xxxxxxxxxx. " +
+        "Messages to support will fail until it is corrected."
+    );
+  }
   const getSupportLinkHtml = () =>
     SUPPORT_TG_LINK ? `<a href="${SUPPORT_TG_LINK}">написать в поддержку</a>` : "написать в поддержку";
   const getSupportMenuLinkHtml = () =>
     SUPPORT_MENU_LINK
       ? `<a href="${SUPPORT_MENU_LINK}">пункт меню «🆘 Поддержка»</a>`
       : "пункт меню «🆘 Поддержка»";
-  const buildSupportMessage = ({ userId, username, message, contact, plan, createdAt }) =>
+  const buildSupportMessage = ({ userId, username, name, message, contact, plan, createdAt }) =>
     [
       "🆘 SUPPORT",
       "",
       "User:",
       username || "не указан",
+      `Имя: ${name || "не указано"}`,
       `ID: ${userId}`,
       "",
       "Message:",
@@ -59,12 +62,11 @@ export default function callbackHandler(bot, pool) {
   };
   const isSupportSender = (ctx) => {
     if (SUPPORT_CHAT_ID_NUM && ctx.chat?.id === SUPPORT_CHAT_ID_NUM) return true;
-    if (SUPPORT_CHAT_USERNAME && ctx.chat?.username === SUPPORT_CHAT_USERNAME) return true;
     return isSupportAgent(ctx);
   };
   const sendToSupport = async (text) => {
     if (!SUPPORT_TARGET) {
-      console.error("❌ SUPPORT_TARGET not configured. Set SUPPORT_CHAT_ID or SUPPORT_AGENT_USERNAME.");
+      console.error("❌ SUPPORT_TARGET not configured. Set SUPPORT_CHAT_ID to a supergroup id.");
       return { ok: false, reason: "support_target_missing" };
     }
     try {
@@ -80,7 +82,7 @@ export default function callbackHandler(bot, pool) {
       if (code === 403 || code === 400) {
         console.error(
           "❌ sendToSupport failed: bot cannot message this chat/user. " +
-            "Ensure support chat has started the bot or use a group chat (-100...).",
+            "Ensure the bot is in the support supergroup and has permission to post.",
           { code, description }
         );
       } else {
@@ -164,9 +166,11 @@ export default function callbackHandler(bot, pool) {
       const contact = st.supportContact || "не указан";
       const createdAt = new Date().toLocaleString("ru-RU");
       const username = ctx.from?.username ? `@${ctx.from.username}` : "не указан";
+      const name = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ");
       const text = buildSupportMessage({
         userId,
         username,
+        name,
         message: msgText,
         contact,
         plan: st.plan,
@@ -191,9 +195,11 @@ export default function callbackHandler(bot, pool) {
       const contact = st.supportContact || "не указан";
       const createdAt = new Date().toLocaleString("ru-RU");
       const username = ctx.from?.username ? `@${ctx.from.username}` : "не указан";
+      const name = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ");
       const text = buildSupportMessage({
         userId,
         username,
+        name,
         message: msgText,
         contact,
         plan: st.plan,
