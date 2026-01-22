@@ -50,10 +50,12 @@ export default function callbackHandler(bot, pool) {
     console.error(supportTargetHint());
   }
   const getSupportLinkHtml = () =>
-    SUPPORT_TG_LINK ? `<a href="${SUPPORT_TG_LINK}">написать в поддержку</a>` : "написать в поддержку";
+    supportConfig.supportTgLink
+      ? `<a href="${supportConfig.supportTgLink}">написать в поддержку</a>`
+      : "написать в поддержку";
   const getSupportMenuLinkHtml = () =>
-    SUPPORT_MENU_LINK
-      ? `<a href="${SUPPORT_MENU_LINK}">пункт меню «🆘 Поддержка»</a>`
+    supportConfig.supportMenuLink
+      ? `<a href="${supportConfig.supportMenuLink}">пункт меню «🆘 Поддержка»</a>`
       : "пункт меню «🆘 Поддержка»";
   const buildSupportMessage = ({ userId, username, name, message, contact, plan, createdAt }) =>
     [
@@ -74,8 +76,9 @@ export default function callbackHandler(bot, pool) {
       `Ответить: /support_reply ${userId} <текст ответа>`,
     ].join("\n");
   const isSupportAgent = (ctx) => {
-    if (SUPPORT_AGENT_ID && ctx.from?.id === SUPPORT_AGENT_ID) return true;
-    if (SUPPORT_AGENT_USERNAME && ctx.from?.username === SUPPORT_AGENT_USERNAME) return true;
+    if (supportConfig.supportAgentId && ctx.from?.id === supportConfig.supportAgentId) return true;
+    if (supportConfig.supportAgentUsername && ctx.from?.username === supportConfig.supportAgentUsername)
+      return true;
     return false;
   };
   const isSupportSender = (ctx) => {
@@ -420,12 +423,16 @@ export default function callbackHandler(bot, pool) {
     // ---------------- SUPPORT ----------------
     if (data === "MENU_SUPPORT") {
       setState(userId, { step: "support_contact", supportContact: null, supportContactType: null });
-      const supportLink = SUPPORT_TG_LINK ? `<a href="${SUPPORT_TG_LINK}">написать в поддержку</a>` : "";
+      const supportLink = supportConfig.supportTgLink
+        ? `<a href="${supportConfig.supportTgLink}">написать в поддержку</a>`
+        : "";
       const username = ctx.from?.username ? `@${ctx.from.username}` : null;
       const keyboard = [
         ...(username ? [[{ text: `✅ Использовать ${username}`, callback_data: "SUPPORT_USE_USERNAME" }]] : []),
         [{ text: "✍️ Указать другой контакт", callback_data: "SUPPORT_ENTER_CONTACT" }],
-        ...(SUPPORT_TG_LINK ? [[{ text: "💬 Написать в поддержку", url: SUPPORT_TG_LINK }]] : []),
+        ...(supportConfig.supportTgLink
+          ? [[{ text: "💬 Написать в поддержку", url: supportConfig.supportTgLink }]]
+          : []),
         [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
       ];
       await safeEdit(textTemplates.supportContactPrompt(username, supportLink), {
