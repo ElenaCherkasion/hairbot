@@ -13,6 +13,9 @@ function ensure(userId) {
       consentThird: false,
       supportContact: null,
       supportContactType: null,
+      supportMode: false,
+      supportLastSentAt: 0,
+      supportTicketSeq: 0,
       restartNoticeSeenId: 0,
       offerAccepted: false,
     });
