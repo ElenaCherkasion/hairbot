@@ -25,6 +25,7 @@ const SUPPORT_TARGET =
     : "";
 
 export default function callbackHandler(bot, pool) {
+  let supportTargetWarned = false;
   if (!SUPPORT_TARGET && SUPPORT_CHAT_ID) {
     console.error(
       "❌ SUPPORT_CHAT_ID must be a supergroup id like -100xxxxxxxxxx. " +
@@ -66,7 +67,12 @@ export default function callbackHandler(bot, pool) {
   };
   const sendToSupport = async (text) => {
     if (!SUPPORT_TARGET) {
-      console.error("❌ SUPPORT_TARGET not configured. Set SUPPORT_CHAT_ID to a supergroup id.");
+      if (!supportTargetWarned) {
+        supportTargetWarned = true;
+        console.error(
+          "❌ SUPPORT_TARGET not configured. Set SUPPORT_CHAT_ID to a supergroup id like -100xxxxxxxxxx."
+        );
+      }
       return { ok: false, reason: "support_target_missing" };
     }
     try {
