@@ -12,96 +12,69 @@ import {
 } from "../utils/storage.js";
 import { withTimeout } from "../utils/with-timeout.js";
 
-const buildSupportConfig = () => {
-  const supportMessageTimeoutMs = Number(process.env.SUPPORT_MESSAGE_TIMEOUT_MS || 10000);
-  const supportChatIdRaw = process.env.SUPPORT_CHAT_ID ?? "";
-  const supportChatId = String(supportChatIdRaw)
-    .trim()
-    .replace(/^["']|["']$/g, "")
-    .replace(/[−–—]/g, "-");
-  const supportChatIdNum = supportChatId && /^-?\d+$/.test(supportChatId) ? Number(supportChatId) : null;
-  const supportTgLink = process.env.SUPPORT_TG_LINK || "";
-  const supportMenuLink = (process.env.SUPPORT_MENU_LINK || "").trim();
-  const supportAgentUsername = (process.env.SUPPORT_AGENT_USERNAME || "le_cherk").replace(/^@/, "");
-  const supportAgentId = Number(process.env.SUPPORT_AGENT_ID || 0) || null;
-  const supportTarget =
-    Number.isFinite(supportChatIdNum) && supportChatIdNum < 0 && String(supportChatId).startsWith("-100")
-      ? supportChatIdNum
-      : null;
-  const supportTargetReason = (() => {
-    if (!supportChatId) return "missing";
-    if (!/^-\d+$/.test(supportChatId)) return "non_numeric";
-    if (!supportChatId.startsWith("-100")) return "not_supergroup";
-    return null;
-  })();
-  return {
-    supportMessageTimeoutMs,
-    supportChatIdRaw,
-    supportChatId,
-    supportChatIdNum,
-    supportTgLink,
-    supportMenuLink,
-    supportAgentUsername,
-    supportAgentId,
-    supportTarget,
-    supportTargetReason,
-  };
-};
-
-const getSupportLinkHtml = (supportConfig) =>
-  supportConfig.supportTgLink
-    ? `<a href="${supportConfig.supportTgLink}">написать в поддержку</a>`
-    : "написать в поддержку";
-
-const getSupportMenuLinkHtml = (supportConfig) =>
-  supportConfig.supportMenuLink
-    ? `<a href="${supportConfig.supportMenuLink}">пункт меню «🆘 Поддержка»</a>`
-    : "пункт меню «🆘 Поддержка»";
-
-const buildSupportMessage = ({ userId, username, name, message, contact, plan, createdAt }) =>
-  [
-    "🆘 SUPPORT",
-    "",
-    "User:",
-    username || "не указан",
-    `Имя: ${name || "не указано"}`,
-    `ID: ${userId}`,
-    "",
-    "Message:",
-    message,
-    "",
-    `Контакт для обратной связи: ${contact || "не указан"}`,
-    `Тариф: ${plan || "не выбран"}`,
-    `Дата: ${createdAt}`,
-    "",
-    `Ответить: /support_reply ${userId} <текст ответа>`,
-  ].join("\n");
-
-const buildSupportContactKeyboard = (supportConfig, username) => [
-  ...(username ? [[{ text: `✅ Использовать ${username}`, callback_data: "SUPPORT_USE_USERNAME" }]] : []),
-  [{ text: "✍️ Указать другой контакт", callback_data: "SUPPORT_ENTER_CONTACT" }],
-  ...(supportConfig.supportTgLink
-    ? [[{ text: "💬 Написать в поддержку", url: supportConfig.supportTgLink }]]
-    : []),
-  [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
-];
+const SUPPORT_MESSAGE_TIMEOUT_MS = Number(process.env.SUPPORT_MESSAGE_TIMEOUT_MS || 10000);
+const SUPPORT_CHAT_ID_RAW = process.env.SUPPORT_CHAT_ID ?? "";
+const SUPPORT_CHAT_ID = String(SUPPORT_CHAT_ID_RAW)
+  .trim()
+  .replace(/^["']|["']$/g, "")
+  .replace(/[−–—]/g, "-");
+const SUPPORT_CHAT_ID_NUM = SUPPORT_CHAT_ID && /^-?\d+$/.test(SUPPORT_CHAT_ID) ? Number(SUPPORT_CHAT_ID) : null;
+const SUPPORT_TG_LINK = process.env.SUPPORT_TG_LINK || "";
+const SUPPORT_MENU_LINK = (process.env.SUPPORT_MENU_LINK || "").trim();
+const SUPPORT_AGENT_USERNAME = (process.env.SUPPORT_AGENT_USERNAME || "le_cherk").replace(/^@/, "");
+const SUPPORT_AGENT_ID = Number(process.env.SUPPORT_AGENT_ID || 0) || null;
+const SUPPORT_TARGET =
+  Number.isFinite(SUPPORT_CHAT_ID_NUM) && SUPPORT_CHAT_ID_NUM < 0 && String(SUPPORT_CHAT_ID).startsWith("-100")
+    ? SUPPORT_CHAT_ID_NUM
+    : null;
+const SUPPORT_TARGET_REASON = (() => {
+  if (!SUPPORT_CHAT_ID) return "missing";
+  if (!/^-\d+$/.test(SUPPORT_CHAT_ID)) return "non_numeric";
+  if (!SUPPORT_CHAT_ID.startsWith("-100")) return "not_supergroup";
+  return null;
+})();
 
 export default function callbackHandler(bot, pool) {
   let supportTargetWarned = false;
-  const supportConfig = buildSupportConfig();
   const supportTargetHint = () => {
-    if (!supportConfig.supportTargetReason) return "";
-    if (supportConfig.supportTargetReason === "missing") {
+    if (!SUPPORT_TARGET_REASON) return "";
+    if (SUPPORT_TARGET_REASON === "missing") {
       return "❌ SUPPORT_CHAT_ID is not set. Messages to support will fail until it is configured.";
     }
-    if (supportConfig.supportTargetReason === "non_numeric") {
-      return `❌ SUPPORT_CHAT_ID must be a numeric id like -100xxxxxxxxxx. Received: "${supportConfig.supportChatIdRaw}".`;
+    if (SUPPORT_TARGET_REASON === "non_numeric") {
+      return `❌ SUPPORT_CHAT_ID must be a numeric id like -100xxxxxxxxxx. Received: "${SUPPORT_CHAT_ID_RAW}".`;
     }
-    return `❌ SUPPORT_CHAT_ID must be a supergroup id like -100xxxxxxxxxx. Received: "${supportConfig.supportChatIdRaw}".`;
+    return `❌ SUPPORT_CHAT_ID must be a supergroup id like -100xxxxxxxxxx. Received: "${SUPPORT_CHAT_ID_RAW}".`;
   };
-  if (!supportConfig.supportTarget && supportConfig.supportTargetReason) {
+  if (!SUPPORT_TARGET && SUPPORT_TARGET_REASON) {
     console.error(supportTargetHint());
   }
+  const getSupportLinkHtml = () =>
+    supportConfig.supportTgLink
+      ? `<a href="${supportConfig.supportTgLink}">написать в поддержку</a>`
+      : "написать в поддержку";
+  const getSupportMenuLinkHtml = () =>
+    supportConfig.supportMenuLink
+      ? `<a href="${supportConfig.supportMenuLink}">пункт меню «🆘 Поддержка»</a>`
+      : "пункт меню «🆘 Поддержка»";
+  const buildSupportMessage = ({ userId, username, name, message, contact, plan, createdAt }) =>
+    [
+      "🆘 SUPPORT",
+      "",
+      "User:",
+      username || "не указан",
+      `Имя: ${name || "не указано"}`,
+      `ID: ${userId}`,
+      "",
+      "Message:",
+      message,
+      "",
+      `Контакт для обратной связи: ${contact || "не указан"}`,
+      `Тариф: ${plan || "не выбран"}`,
+      `Дата: ${createdAt}`,
+      "",
+      `Ответить: /support_reply ${userId} <текст ответа>`,
+    ].join("\n");
   const isSupportAgent = (ctx) => {
     if (supportConfig.supportAgentId && ctx.from?.id === supportConfig.supportAgentId) return true;
     if (supportConfig.supportAgentUsername && ctx.from?.username === supportConfig.supportAgentUsername)
@@ -109,11 +82,11 @@ export default function callbackHandler(bot, pool) {
     return false;
   };
   const isSupportSender = (ctx) => {
-    if (supportConfig.supportChatIdNum && ctx.chat?.id === supportConfig.supportChatIdNum) return true;
+    if (SUPPORT_CHAT_ID_NUM && ctx.chat?.id === SUPPORT_CHAT_ID_NUM) return true;
     return isSupportAgent(ctx);
   };
   const sendToSupport = async (text) => {
-    if (!supportConfig.supportTarget) {
+    if (!SUPPORT_TARGET) {
       if (!supportTargetWarned) {
         supportTargetWarned = true;
         console.error(supportTargetHint() || "❌ SUPPORT_TARGET not configured.");
@@ -122,8 +95,8 @@ export default function callbackHandler(bot, pool) {
     }
     try {
       await withTimeout(
-        bot.telegram.sendMessage(supportConfig.supportTarget, text),
-        supportConfig.supportMessageTimeoutMs,
+        bot.telegram.sendMessage(SUPPORT_TARGET, text),
+        SUPPORT_MESSAGE_TIMEOUT_MS,
         "Support message send timed out"
       );
       return { ok: true };
@@ -235,7 +208,7 @@ export default function callbackHandler(bot, pool) {
       } else {
         await notifyUserDelivery(
           userId,
-          textTemplates.supportThanksFallback(getSupportLinkHtml(supportConfig)),
+          textTemplates.supportThanksFallback(getSupportLinkHtml()),
           ctx
         );
       }
@@ -262,7 +235,7 @@ export default function callbackHandler(bot, pool) {
       } else {
         await notifyUserDelivery(
           userId,
-          textTemplates.supportThanksFallback(getSupportLinkHtml(supportConfig)),
+          textTemplates.supportThanksFallback(getSupportLinkHtml()),
           ctx
         );
       }
@@ -272,6 +245,13 @@ export default function callbackHandler(bot, pool) {
 
   // ====== CALLBACK HANDLER ======
   bot.on("callback_query", async (ctx) => {
+    const userId = ctx.from?.id;
+    const data = ctx.callbackQuery?.data;
+    if (!userId || !data) return;
+    const supportLink = getSupportLinkHtml(supportConfig);
+    const supportMenuLink = getSupportMenuLinkHtml(supportConfig);
+    const offerUrl = (process.env.PUBLIC_OFFER_URL || process.env.OFFER_URL || "").trim();
+
     try {
       const userId = ctx.from?.id;
       const data = ctx.callbackQuery?.data;
@@ -455,7 +435,14 @@ export default function callbackHandler(bot, pool) {
         ? `<a href="${supportConfig.supportTgLink}">написать в поддержку</a>`
         : "";
       const username = ctx.from?.username ? `@${ctx.from.username}` : null;
-      const keyboard = buildSupportContactKeyboard(supportConfig, username);
+      const keyboard = [
+        ...(username ? [[{ text: `✅ Использовать ${username}`, callback_data: "SUPPORT_USE_USERNAME" }]] : []),
+        [{ text: "✍️ Указать другой контакт", callback_data: "SUPPORT_ENTER_CONTACT" }],
+        ...(supportConfig.supportTgLink
+          ? [[{ text: "💬 Написать в поддержку", url: supportConfig.supportTgLink }]]
+          : []),
+        [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
+      ];
       await safeEdit(textTemplates.supportContactPrompt(username, supportLink), {
         reply_markup: {
           inline_keyboard: keyboard,
