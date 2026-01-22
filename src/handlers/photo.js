@@ -68,6 +68,13 @@ export default function photoHandler(bot) {
     if (!userId) return;
 
     const st = getState(userId);
+    if (st.step !== "support_contact" && st.step !== "support_contact_custom" && !st.supportMode) {
+      await ctx.reply(textTemplates.supportOnlyPrompt, {
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[{ text: "🆘 Поддержка", callback_data: "MENU_SUPPORT" }]] },
+      });
+      return;
+    }
 
     if (!canAcceptPhoto(userId)) {
       if (!st.plan) {

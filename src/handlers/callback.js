@@ -13,6 +13,8 @@ import {
 import { withTimeout } from "../utils/with-timeout.js";
 import { getSupportConfig } from "../utils/support-config.js";
 
+const SUPPORT_SPAM_WINDOW_MS = Number(process.env.SUPPORT_SPAM_WINDOW_MS || 60000);
+
 const getSupportLinkHtml = (supportConfig) =>
   supportConfig.supportTgLink
     ? `<a href="${supportConfig.supportTgLink}">написать в поддержку</a>`
@@ -23,9 +25,12 @@ const getSupportMenuLinkHtml = (supportConfig) =>
     ? `<a href="${supportConfig.supportMenuLink}">пункт меню «🆘 Поддержка»</a>`
     : "пункт меню «🆘 Поддержка»";
 
-const buildSupportMessage = ({ userId, username, name, message, contact, plan, createdAt }) =>
+const buildSupportMessage = ({ ticketNumber, userId, username, name, message, contact, plan, createdAt }) =>
   [
     "🆘 SUPPORT",
+    "",
+    `Номер обращения: ${ticketNumber}`,
+    `Дата: ${createdAt}`,
     "",
     "User:",
     username || "не указан",
@@ -124,6 +129,20 @@ export default function callbackHandler(bot, pool) {
       ...mainMenuKeyboard(),
     });
   };
+  const shouldBlockUserMessage = (ctx, st, msgText) => {
+    if (msgText.startsWith("/")) return false;
+    if (st.supportMode) return false;
+    if (st.step === "support_contact" || st.step === "support_contact_custom") return false;
+    if (st.step === "wait_support_message" || st.step === "support_ready_to_message") return false;
+    return !isSupportSender(ctx);
+  };
+  const isSupportSpam = (st, now) =>
+    Number.isFinite(st.supportLastSentAt) && st.supportLastSentAt > 0 && now - st.supportLastSentAt < SUPPORT_SPAM_WINDOW_MS;
+  const bumpTicketNumber = (st, userId) => {
+    const nextSeq = Number(st.supportTicketSeq || 0) + 1;
+    setState(userId, { supportTicketSeq: nextSeq, supportLastSentAt: Date.now() });
+    return `${userId}-${nextSeq}`;
+  };
 
   // ====== TEXT INPUT HANDLER (support message) ======
   bot.on("text", async (ctx) => {
@@ -132,6 +151,14 @@ export default function callbackHandler(bot, pool) {
 
     const st = getState(userId);
     const msgText = (ctx.message?.text || "").trim();
+
+    if (shouldBlockUserMessage(ctx, st, msgText)) {
+      await ctx.reply(textTemplates.supportOnlyPrompt, {
+        parse_mode: "HTML",
+        ...mainMenuKeyboard(),
+      });
+      return;
+    }
 
     if (isSupportSender(ctx) && msgText.startsWith("/")) {
       const match = msgText.match(/^\/(support_reply|reply)\s+(\d+)\s+([\s\S]+)$/);
@@ -176,11 +203,19 @@ export default function callbackHandler(bot, pool) {
     if (st.step === "wait_support_message" || st.step === "support_ready_to_message") {
       setState(userId, { step: "idle" });
 
+      const now = Date.now();
+      if (isSupportSpam(st, now)) {
+        await notifyUserDelivery(userId, textTemplates.supportSpamWarning, ctx);
+        return;
+      }
+
       const contact = st.supportContact || "не указан";
       const createdAt = new Date().toLocaleString("ru-RU");
       const username = ctx.from?.username ? `@${ctx.from.username}` : "не указан";
       const name = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ");
+      const ticketNumber = bumpTicketNumber(st, userId);
       const text = buildSupportMessage({
+        ticketNumber,
         userId,
         username,
         name,
@@ -205,11 +240,19 @@ export default function callbackHandler(bot, pool) {
     }
 
     if (st.supportMode) {
+      const now = Date.now();
+      if (isSupportSpam(st, now)) {
+        await notifyUserDelivery(userId, textTemplates.supportSpamWarning, ctx);
+        return;
+      }
+
       const contact = st.supportContact || "не указан";
       const createdAt = new Date().toLocaleString("ru-RU");
       const username = ctx.from?.username ? `@${ctx.from.username}` : "не указан";
       const name = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ");
+      const ticketNumber = bumpTicketNumber(st, userId);
       const text = buildSupportMessage({
+        ticketNumber,
         userId,
         username,
         name,
@@ -449,7 +492,7 @@ export default function callbackHandler(bot, pool) {
 
     if (data === "SUPPORT_ENTER_CONTACT") {
       setState(userId, { step: "support_contact_custom" });
-      const keyboard = buildSupportContactKeyboard(supportConfig, ctx.from?.username ? `@${ctx.from.username}` : null);
+      const keyboard = buildSupportContactKeyboard(ctx.from?.username ? `@${ctx.from.username}` : null);
       await safeEdit(textTemplates.supportContactCustomPrompt, {
         reply_markup: {
           inline_keyboard: keyboard,
