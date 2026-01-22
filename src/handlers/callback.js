@@ -248,8 +248,8 @@ export default function callbackHandler(bot, pool) {
     const userId = ctx.from?.id;
     const data = ctx.callbackQuery?.data;
     if (!userId || !data) return;
-    const supportLink = getSupportLinkHtml();
-    const supportMenuLink = getSupportMenuLinkHtml();
+    const supportLink = getSupportLinkHtml(supportConfig);
+    const supportMenuLink = getSupportMenuLinkHtml(supportConfig);
     const offerUrl = (process.env.PUBLIC_OFFER_URL || process.env.OFFER_URL || "").trim();
 
     try {
