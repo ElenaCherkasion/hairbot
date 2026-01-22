@@ -13,6 +13,7 @@ function ensure(userId) {
       consentThird: false,
       supportContact: null,
       supportContactType: null,
+      supportMode: false,
       restartNoticeSeenId: 0,
       offerAccepted: false,
     });
