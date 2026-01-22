@@ -42,12 +42,9 @@ const buildSupportMessage = ({ userId, username, name, message, contact, plan, c
     `Ответить: /support_reply ${userId} <текст ответа>`,
   ].join("\n");
 
-const buildSupportContactKeyboard = (supportConfig, username) => [
+const buildSupportContactKeyboard = (username) => [
   ...(username ? [[{ text: `✅ Использовать ${username}`, callback_data: "SUPPORT_USE_USERNAME" }]] : []),
   [{ text: "✍️ Указать другой контакт", callback_data: "SUPPORT_ENTER_CONTACT" }],
-  ...(supportConfig.supportTgLink
-    ? [[{ text: "💬 Написать в поддержку", url: supportConfig.supportTgLink }]]
-    : []),
   [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
 ];
 
@@ -416,12 +413,9 @@ export default function callbackHandler(bot, pool) {
     // ---------------- SUPPORT ----------------
     if (data === "MENU_SUPPORT") {
       setState(userId, { step: "support_contact", supportContact: null, supportContactType: null });
-      const supportLink = supportConfig.supportTgLink
-        ? `<a href="${supportConfig.supportTgLink}">написать в поддержку</a>`
-        : "";
       const username = ctx.from?.username ? `@${ctx.from.username}` : null;
-      const keyboard = buildSupportContactKeyboard(supportConfig, username);
-      await safeEdit(textTemplates.supportContactPrompt(username, supportLink), {
+      const keyboard = buildSupportContactKeyboard(username);
+      await safeEdit(textTemplates.supportContactPrompt(username, ""), {
         reply_markup: {
           inline_keyboard: keyboard,
         },
