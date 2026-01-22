@@ -449,7 +449,7 @@ export default function callbackHandler(bot, pool) {
 
     if (data === "SUPPORT_ENTER_CONTACT") {
       setState(userId, { step: "support_contact_custom" });
-      const keyboard = buildSupportContactKeyboard(ctx.from?.username ? `@${ctx.from.username}` : null);
+      const keyboard = buildSupportContactKeyboard(supportConfig, ctx.from?.username ? `@${ctx.from.username}` : null);
       await safeEdit(textTemplates.supportContactCustomPrompt, {
         reply_markup: {
           inline_keyboard: keyboard,
