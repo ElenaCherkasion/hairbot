@@ -157,18 +157,15 @@ export async function startBot() {
       } catch (e) {
         if (isConflictError(e)) {
           const reason = "обнаружен конфликт polling — бот уже запущен в другом месте";
-          console.warn(
-            "⚠️ Polling conflict detected (another instance is running). Retrying in 10s..."
+          restartState.id += 1;
+          restartState.reason = reason;
+          console.error(
+            "❌ Polling conflict: another bot instance is running. Stop the other instance or use webhook mode."
           );
-          await sleep(10000);
           try {
-            await restartAfterWait(reason);
-            break;
-          } catch (restartError) {
-            console.warn("⚠️ Restart after conflict failed. Retrying in 10s...", restartError?.message);
-            await sleep(10000);
-            continue;
-          }
+            await bot.stop("CONFLICT");
+          } catch {}
+          break;
         }
         if (isTimeoutError(e)) {
           const reason = "истекло время ожидания ответа Telegram";
