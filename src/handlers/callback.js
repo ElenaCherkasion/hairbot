@@ -253,28 +253,36 @@ export default function callbackHandler(bot, pool) {
     const offerUrl = (process.env.PUBLIC_OFFER_URL || process.env.OFFER_URL || "").trim();
 
     try {
-      await ctx.answerCbQuery();
-    } catch (error) {
-      await ctx.reply(textTemplates.stuckInstruction, mainMenuKeyboard());
-      return;
-    }
+      const userId = ctx.from?.id;
+      const data = ctx.callbackQuery?.data;
+      if (!userId || !data) return;
+      const supportLink = getSupportLinkHtml(supportConfig);
+      const supportMenuLink = getSupportMenuLinkHtml(supportConfig);
+      const offerUrl = (process.env.PUBLIC_OFFER_URL || process.env.OFFER_URL || "").trim();
 
-    const safeEdit = async (html, extra) => {
-      const payload = { parse_mode: "HTML", ...(extra || mainMenuKeyboard()) };
       try {
-        await ctx.editMessageText(html, payload);
-      } catch {
-        try {
-          await ctx.reply(html, payload);
-        } catch {
-          await ctx.reply(textTemplates.stuckInstruction, mainMenuKeyboard());
-        }
+        await ctx.answerCbQuery();
+      } catch (error) {
+        await ctx.reply(textTemplates.stuckInstruction, mainMenuKeyboard());
+        return;
       }
-    };
 
-    const backToMenuKb = {
-      reply_markup: { inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]] },
-    };
+      const safeEdit = async (html, extra) => {
+        const payload = { parse_mode: "HTML", ...(extra || mainMenuKeyboard()) };
+        try {
+          await ctx.editMessageText(html, payload);
+        } catch {
+          try {
+            await ctx.reply(html, payload);
+          } catch {
+            await ctx.reply(textTemplates.stuckInstruction, mainMenuKeyboard());
+          }
+        }
+      };
+
+      const backToMenuKb = {
+        reply_markup: { inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]] },
+      };
 
     // ---------------- MENU_HOME ----------------
     if (data === "MENU_HOME") {
@@ -667,7 +675,7 @@ export default function callbackHandler(bot, pool) {
       return;
     }
 
-        // ---------------- DELETE FLOW ----------------
+    // ---------------- DELETE FLOW ----------------
     if (data === "MENU_DELETE") {
       await safeEdit(textTemplates.deleteIntro, {
         reply_markup: {
@@ -704,5 +712,18 @@ export default function callbackHandler(bot, pool) {
     // fallback
     await safeEdit("Неизвестная команда. Откройте меню:", mainMenuKeyboard());
     return;
+    } catch (error) {
+      console.error("❌ callback_query handler failed:", {
+        message: error?.message,
+        code: error?.code,
+        response: error?.response,
+        stack: error?.stack,
+      });
+      try {
+        await ctx.reply(textTemplates.stuckInstruction, mainMenuKeyboard());
+      } catch {
+        // ignore secondary failures
+      }
+    }
   }); // <-- закрываем bot.on("callback_query"...)
 } // <-- закрываем callbackHandler
