@@ -90,6 +90,7 @@
     "node-fetch": "^3.3.2",
     "openai": "^4.20.0",
     "pg": "^8.11.5",
+    "pdfkit": "^0.16.0",
     "sequelize": "^6.35.0",
     "telegraf": "^4.15.0",
     "winston": "^3.11.0"
