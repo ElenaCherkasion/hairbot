@@ -467,6 +467,14 @@ ${
 ✅ Тикет ${ticketNumber} закрыт (ARCHIVED).
 `.trim(),
 
+  supportTicketClosedNotice: (ticketNumber, createdAt) => `
+✅ Обращение №${ticketNumber} от ${createdAt} закрыто.
+`.trim(),
+
+  supportReplyModeExited: `
+⛔️ Режим ответа выключен.
+`.trim(),
+
   supportOnlyPrompt: `
 Пожалуйста, используйте пункт меню «🆘 Поддержка», чтобы написать нам.
 `.trim(),

@@ -58,7 +58,7 @@ const buildSupportReplyKeyboard = (userId, ticketNumber) => ({
   reply_markup: {
     inline_keyboard: [
       [{ text: "✉️ Ответить", callback_data: `SUPPORT_REPLY:${ticketNumber}:${userId}` }],
-      [{ text: "✅ Закрыть", callback_data: `SUPPORT_CLOSE:${ticketNumber}:${userId}` }],
+      [{ text: "✅ Закрыть обращение", callback_data: `SUPPORT_CLOSE:${ticketNumber}:${userId}` }],
       [
         { text: "📄 Лог .txt", callback_data: `SUPPORT_LOG_TXT:${ticketNumber}` },
         { text: "📑 Лог PDF", callback_data: `SUPPORT_LOG_PDF:${ticketNumber}` },
@@ -166,6 +166,10 @@ export default function callbackHandler(bot, pool) {
     const createdAt = new Date(createdAtMs).toLocaleString("ru-RU");
     return textTemplates.supportCaseClosed(ticketNumber, createdAt);
   };
+  const formatTicketClosedSupport = (ticketNumber, createdAtMs) => {
+    const createdAt = new Date(createdAtMs).toLocaleString("ru-RU");
+    return textTemplates.supportTicketClosedNotice(ticketNumber, createdAt);
+  };
   const getTelegramPermalink = (chatId, messageId) => {
     if (!chatId || !messageId) return null;
     const internalId = String(chatId).replace("-100", "");
@@ -188,6 +192,10 @@ export default function callbackHandler(bot, pool) {
     if (supportConfig.supportTarget) {
       try {
         await bot.telegram.sendMessage(supportConfig.supportTarget, textTemplates.supportTicketArchived(ticketNumber));
+        await bot.telegram.sendMessage(
+          supportConfig.supportTarget,
+          formatTicketClosedSupport(ticketNumber, ticket.createdAt)
+        );
       } catch (error) {
         console.error("❌ closeSupportCase failed to notify support:", {
           message: error?.message,
@@ -555,7 +563,12 @@ export default function callbackHandler(bot, pool) {
       }
 
       if (data === "SUPPORT_REPLY_EXIT") {
+        if (!isSupportSender(ctx)) {
+          await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
+          return;
+        }
         clearSupportReplyMode(userId);
+        await ctx.reply(textTemplates.supportReplyModeExited, { parse_mode: "HTML" });
         return;
       }
 
@@ -584,6 +597,9 @@ export default function callbackHandler(bot, pool) {
             createdAt: now,
           });
         }
+        await ctx.reply(
+          `✉️ Режим ответа включен для тикета ${ticketNumber}.\nСледующее сообщение отправится пользователю.`
+        );
         return;
       }
 

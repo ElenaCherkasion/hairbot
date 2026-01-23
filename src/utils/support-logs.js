@@ -54,8 +54,10 @@ export const writeTicketLogPdf = async (ticket, messages) => {
     stream.on("finish", resolve);
     stream.on("error", reject);
 
+    doc.font("Times-Roman");
     doc.fontSize(18).text("SUPPORT TICKET", { align: "center" });
     doc.moveDown();
+    doc.font("Times-Roman");
     doc.fontSize(11);
     doc.text(`Ticket: ${ticket.ticketNumber}`);
     doc.text(`User ID: ${ticket.userId}`);
@@ -69,8 +71,10 @@ export const writeTicketLogPdf = async (ticket, messages) => {
       doc.text(`Permalink: ${ticket.telegramPermalink}`);
     }
     doc.moveDown();
+    doc.font("Times-Roman");
     doc.fontSize(12).text("Сообщения:", { underline: true });
     doc.moveDown(0.5);
+    doc.font("Times-Roman");
     doc.fontSize(10);
 
     messages.forEach((msg) => {
@@ -81,6 +85,7 @@ export const writeTicketLogPdf = async (ticket, messages) => {
     });
 
     doc.moveDown();
+    doc.font("Times-Roman");
     doc.fontSize(9).text(`Сформировано: ${formatDateTime(Date.now())}`, { align: "right" });
     doc.end();
   });
