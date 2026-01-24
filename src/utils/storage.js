@@ -81,6 +81,7 @@ export function canAcceptPhoto(userId) {
 export async function deleteUserDataFromDB(pool, userId) {
   if (!pool) return;
   // здесь только пример — добавишь реальные таблицы по мере появления
+  // обращения в поддержку и их логи не удаляются (для хранения истории обращений)
   // await pool.query("DELETE FROM user_photos WHERE user_id=$1", [userId]);
   // await pool.query("DELETE FROM user_reports WHERE user_id=$1", [userId]);
   return;
@@ -114,6 +115,17 @@ export function appendTicketMessage(entry) {
 export function getTicketMessages(ticketNumber) {
   const list = TICKET_MESSAGES.get(ticketNumber) || [];
   return [...list].sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0));
+}
+
+export function getTicketsByUser(userId, statuses = []) {
+  const list = Array.from(TICKETS.values()).filter((ticket) => String(ticket.userId) === String(userId));
+  if (!statuses.length) return list;
+  return list.filter((ticket) => statuses.includes(ticket.status));
+}
+
+export function getTicketsByStatus(statuses = []) {
+  if (!statuses.length) return Array.from(TICKETS.values());
+  return Array.from(TICKETS.values()).filter((ticket) => statuses.includes(ticket.status));
 }
 
 export function setSupportReplyMode(operatorId, data) {
