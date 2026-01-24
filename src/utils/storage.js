@@ -5,6 +5,7 @@ const FREE_PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
 const TICKETS = new Map();
 const TICKET_MESSAGES = new Map();
 const SUPPORT_REPLY_MODES = new Map();
+const SUPPORT_SEARCH_MODES = new Map();
 
 function ensure(userId) {
   if (!STORE.has(userId)) {
@@ -140,4 +141,18 @@ export function getSupportReplyMode(operatorId) {
 
 export function clearSupportReplyMode(operatorId) {
   SUPPORT_REPLY_MODES.delete(operatorId);
+}
+
+export function setSupportSearchMode(operatorId, data) {
+  if (!operatorId) return null;
+  SUPPORT_SEARCH_MODES.set(operatorId, { ...(data || {}) });
+  return SUPPORT_SEARCH_MODES.get(operatorId);
+}
+
+export function getSupportSearchMode(operatorId) {
+  return SUPPORT_SEARCH_MODES.get(operatorId) || null;
+}
+
+export function clearSupportSearchMode(operatorId) {
+  SUPPORT_SEARCH_MODES.delete(operatorId);
 }
