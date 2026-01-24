@@ -70,7 +70,7 @@ export const writeTicketLogPdf = async (ticket, messages) => {
     doc.fontSize(18).text("ТИТУЛЬНАЯ СТРАНИЦА", { align: "center" });
     doc.moveDown();
     doc.font("Times-Roman");
-    doc.fontSize(11);
+    doc.fontSize(12);
     doc.text(`Обращение №${ticket.ticketNumber}`);
     doc.text(`Дата создания: ${formatDateTime(ticket.createdAt)}`);
     doc.text(`Дата закрытия: ${formatDateTime(ticket.closedAt)}`);
@@ -87,11 +87,11 @@ export const writeTicketLogPdf = async (ticket, messages) => {
     }
     doc.addPage();
     doc.font("Times-Roman");
-    doc.fontSize(12).text("Сообщения:", { underline: true });
+    doc.fontSize(14).text("Сообщения:", { underline: true });
     doc.text("Чёткое разделение «Пользователь / Поддержка»");
     doc.moveDown(0.5);
     doc.font("Times-Roman");
-    doc.fontSize(10);
+    doc.fontSize(12);
 
     messages.forEach((msg) => {
       const time = formatDateTime(msg.createdAt);
@@ -108,7 +108,7 @@ export const writeTicketLogPdf = async (ticket, messages) => {
     for (let i = 0; i < range.count; i += 1) {
       doc.switchToPage(i);
       doc.font("Times-Roman");
-      doc.fontSize(9).text(
+      doc.fontSize(10).text(
         `Для личного использования • Стр. ${i + 1} из ${range.count}`,
         40,
         doc.page.height - 40,
