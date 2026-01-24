@@ -453,6 +453,27 @@ ${
 
   supportReadyToMessage: `
 Спасибо! Теперь можно написать сообщение в поддержку ниже.
+Или вернитесь в главное меню.
+`.trim(),
+
+  supportWriteOnlyViaButtons: `
+Пожалуйста, используйте кнопки ниже, чтобы написать в поддержку или закрыть обращение.
+`.trim(),
+
+  supportCaseClosed: (ticketNumber, createdAt) => `
+Поздравляем, обращение №${ticketNumber} от ${createdAt} закрыт.
+`.trim(),
+
+  supportTicketArchived: (ticketNumber) => `
+✅ Тикет ${ticketNumber} закрыт (ARCHIVED).
+`.trim(),
+
+  supportTicketClosedNotice: (ticketNumber, createdAt) => `
+✅ Обращение №${ticketNumber} от ${createdAt} закрыто.
+`.trim(),
+
+  supportReplyModeExited: `
+⛔️ Режим ответа выключен.
 `.trim(),
 
   supportOnlyPrompt: `
