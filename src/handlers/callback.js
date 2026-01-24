@@ -1,6 +1,6 @@
 // src/handlers/callback.js
 import textTemplates from "../utils/text-templates.js";
-import { mainMenuKeyboard } from "../keyboards/main.js";
+import { backToMenuKeyboard, mainMenuKeyboard } from "../keyboards/main.js";
 import {
   getState,
   setState,
@@ -72,7 +72,8 @@ const buildUserSupportActionsKeyboard = () => ({
   reply_markup: {
     inline_keyboard: [
       [{ text: "Мой вопрос закрыт", callback_data: "SUPPORT_USER_CLOSE" }],
-      [{ text: "Написать", callback_data: "SUPPORT_USER_WRITE" }],
+      [{ text: "Написать еще сообщение", callback_data: "SUPPORT_USER_WRITE" }],
+      [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
     ],
   },
 });
@@ -546,7 +547,7 @@ export default function callbackHandler(bot, pool) {
         setState(userId, { supportMode: true, supportWriteEnabled: true, step: "support_ready_to_message" });
         await ctx.reply(textTemplates.supportReadyToMessage, {
           parse_mode: "HTML",
-          ...mainMenuKeyboard(),
+          ...backToMenuKeyboard(),
         });
         return;
       }
