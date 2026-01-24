@@ -4,51 +4,81 @@ import path from "path";
 import os from "os";
 
 const formatDateTime = (value) => {
-  if (!value) return "не указано";
+  if (!value) return "—";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "не указано";
-  return date.toLocaleString("ru-RU");
+  if (Number.isNaN(date.getTime())) return "—";
+  const pad = (num) => String(num).padStart(2, "0");
+  const day = pad(date.getDate());
+  const month = pad(date.getMonth() + 1);
+  const year = date.getFullYear();
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  return `${day}.${month}.${year} ${hours}:${minutes}`;
 };
 
 const formatDirection = (value) => {
-  if (value === "user") return "Пользователь";
-  if (value === "support") return "Поддержка";
-  if (value === "system") return "Система";
-  return "Система";
+  if (value === "user") return "ПОЛЬЗОВАТЕЛЬ";
+  if (value === "support") return "ПОДДЕРЖКА";
+  if (value === "system") return "СИСТЕМА";
+  return "СИСТЕМА";
+};
+
+const formatStatus = (value) => {
+  if (value === "closed") return "ЗАКРЫТО";
+  if (value === "in_progress" || value === "open") return "В РАБОТЕ";
+  return "В РАБОТЕ";
+};
+
+const formatValue = (value) => (value ? value : "—");
+
+const formatUsername = (value) => {
+  if (!value) return "—";
+  const username = String(value).replace(/^@/, "");
+  return `@${username}`;
 };
 
 export const buildTicketLogText = (ticket, messages) => {
   const lines = [
-    "ТИТУЛЬНАЯ СТРАНИЦА",
+    "SUPPORT TICKET",
+    "==================================================",
     "",
-    `Обращение №${ticket.ticketNumber}`,
-    `Дата создания: ${formatDateTime(ticket.createdAt)}`,
-    `Дата закрытия: ${formatDateTime(ticket.closedAt)}`,
+    `Тикет: ${ticket.ticketNumber}`,
+    `Статус: ${formatStatus(ticket.status)}`,
+    `Создан: ${formatDateTime(ticket.createdAt)}`,
+    `Закрыт: ${formatDateTime(ticket.closedAt)}`,
     "",
-    `Статус: ${ticket.status || "open"}`,
     "",
-    "Данные пользователя:",
-    `User ID: ${ticket.userId}`,
-    `Username: ${ticket.username || "не указан"}`,
-    `Имя: ${ticket.name || "не указано"}`,
-    `Контакт: ${ticket.contact || "не указан"}`,
+    "ПОЛЬЗОВАТЕЛЬ",
+    "--------------------------------------------------",
     "",
-    `Тариф: ${ticket.plan || "не выбран"}`,
+    `ID: ${formatValue(ticket.userId)}`,
+    `Username: ${formatUsername(ticket.username)}`,
+    `Имя: ${formatValue(ticket.name)}`,
+    `Тариф: ${formatValue(ticket.plan)}`,
+    `Контакт: ${formatValue(ticket.contact)}`,
     "",
-    ticket.telegramPermalink ? `Permalink: ${ticket.telegramPermalink}` : null,
     "",
-    "ДИАЛОГ",
-  ].filter(Boolean);
+    "СООБЩЕНИЯ",
+    "--------------------------------------------------",
+  ];
 
   for (const msg of messages) {
     const time = formatDateTime(msg.createdAt);
     const direction = formatDirection(msg.from);
-    lines.push(`[${time}] ${direction}: ${msg.text || ""}`.trim());
+    const text = msg.text || "";
+    lines.push("");
+    lines.push("");
+    lines.push(`[${direction}] ${time}`);
+    lines.push("");
+    lines.push(`***${text}***`);
+    lines.push("");
     lines.push("");
   }
 
   lines.push("");
-  lines.push("Для личного использования");
+  lines.push("==================================================");
+  lines.push("Конец диалога");
+  lines.push(`Сформировано: ${formatDateTime(Date.now())}`);
 
   return `${lines.join("\n")}\n`;
 };

@@ -1,4 +1,7 @@
 // src/handlers/callback.js
+import fsPromises from "fs/promises";
+import os from "os";
+import path from "path";
 import textTemplates from "../utils/text-templates.js";
 import { backToMenuKeyboard, mainMenuKeyboard } from "../keyboards/main.js";
 import {
@@ -16,6 +19,10 @@ import {
   getTicketsByUser,
   appendTicketMessage,
   getTicketMessages,
+  upsertUser,
+  appendAuditLog,
+  listPayments,
+  listAuditLog,
   setSupportReplyMode,
   getSupportReplyMode,
   clearSupportReplyMode,
@@ -71,48 +78,51 @@ const buildSupportMessage = ({
     `Дата: ${createdAt}`,
   ].join("\n");
 
-const buildSupportReplyKeyboard = (userId, ticketNumber, status) => {
-  const isClosed = status === "closed";
-  const rows = [
-    [
-      { text: "📖 Открыть диалог", callback_data: `SUP_DIALOG:${ticketNumber}` },
-      { text: "📂 Обращения пользователя", callback_data: `SUP_TU:${ticketNumber}` },
+const buildSupportTicketInlineKeyboard = (userId, ticketNumber) => ({
+  reply_markup: {
+    inline_keyboard: [
+      [{ text: "📂 Обращения пользователя", callback_data: `SUP_TU:${ticketNumber}` }],
+      [{ text: "✉️ Ответить", callback_data: `SUP_REPLY:${ticketNumber}:${userId}` }],
+      [{ text: "📄 Выгрузить диалог (TXT)", callback_data: `SUP_TXT:${ticketNumber}` }],
+      [{ text: "✅ Закрыть", callback_data: `SUP_CLOSE:${ticketNumber}:${userId}` }],
     ],
-  ];
-  if (!isClosed) {
-    rows.push([{ text: "🟡 Присвоить статус «В работе»", callback_data: `SUPPORT_SET_IN_PROGRESS:${ticketNumber}:${userId}` }]);
-    rows.push([{ text: "✉️ Ответить на последнее сообщение", callback_data: `SUPPORT_REPLY:${ticketNumber}:${userId}` }]);
-  }
-  const logRow = [{ text: "📄 Скачать TXT", callback_data: `SUPPORT_LOG_TXT:${ticketNumber}` }];
-  if (!isClosed) {
-    logRow.push({ text: "✅ Закрыть обращение", callback_data: `SUPPORT_CLOSE:${ticketNumber}:${userId}` });
-  }
-  rows.push(logRow);
-  rows.push([
-    { text: "⬅️ Назад", callback_data: "SUP_MENU_HOME" },
-    { text: "❌ Закрыть окно", callback_data: "SUP_CLOSE_WINDOW" },
-  ]);
-  return {
-    reply_markup: {
-      inline_keyboard: rows,
-    },
-  };
-};
+  },
+});
 
 const SUPPORT_MENU_LABELS = {
-  all: "📚 Все обращения пользователей",
-  search: "🔎 Поиск по номеру обращения или нику",
-  open: "📌 Открытые обращения",
-  closed: "✅ Закрытые обращения",
+  all: "📚 Все обращения",
+  fresh: "🆕 Новые",
+  work: "🟡 В работе",
+  closed: "📁 Закрытые",
+  search: "🔎 Поиск",
+  analytics: "📊 Аналитика",
+  hide: "⬅️ Скрыть меню",
 };
 
-const buildSupportStaticMenuKeyboard = (inProgressCount = 0) => ({
+const formatSupportMenuLabel = (label, count) =>
+  Number.isFinite(count) ? `${label} (${count})` : label;
+
+const resolveSupportMenuKey = (text) => {
+  if (!text) return null;
+  const trimmed = text.trim();
+  if (trimmed.startsWith(SUPPORT_MENU_LABELS.all)) return "all";
+  if (trimmed.startsWith(SUPPORT_MENU_LABELS.fresh)) return "fresh";
+  if (trimmed.startsWith(SUPPORT_MENU_LABELS.work)) return "work";
+  if (trimmed.startsWith(SUPPORT_MENU_LABELS.closed)) return "closed";
+  if (trimmed.startsWith(SUPPORT_MENU_LABELS.search)) return "search";
+  if (trimmed.startsWith(SUPPORT_MENU_LABELS.analytics)) return "analytics";
+  if (trimmed.startsWith(SUPPORT_MENU_LABELS.hide)) return "hide";
+  return null;
+};
+
+const buildSupportBottomMenuKeyboard = ({ freshCount, workCount } = {}) => ({
   reply_markup: {
     keyboard: [
-      [SUPPORT_MENU_LABELS.open, SUPPORT_MENU_LABELS.closed],
-      [SUPPORT_MENU_LABELS.all],
+      [SUPPORT_MENU_LABELS.all, formatSupportMenuLabel(SUPPORT_MENU_LABELS.fresh, freshCount)],
+      [formatSupportMenuLabel(SUPPORT_MENU_LABELS.work, workCount), SUPPORT_MENU_LABELS.closed],
       [SUPPORT_MENU_LABELS.search],
-      [`🟡 В работе: ${inProgressCount}`],
+      [SUPPORT_MENU_LABELS.analytics],
+      [SUPPORT_MENU_LABELS.hide],
     ],
     resize_keyboard: true,
     one_time_keyboard: false,
@@ -157,31 +167,43 @@ const buildUserSupportMenuKeyboard = () => ({
   },
 });
 
-const buildSupportMenuKeyboard = () => ({
-  reply_markup: {
-    inline_keyboard: [
-      [{ text: "📚 Все обращения", callback_data: "SUP_GM" }],
-      [{ text: "📌 Активные обращения", callback_data: "SUPPORT_LIST_ACTIVE" }],
-      [{ text: "✅ Закрытые обращения", callback_data: "SUPPORT_LIST_CLOSED" }],
-    ],
-  },
-});
+const buildTicketListKeyboard = (tickets, listCallback, page, totalPages) => {
+  const rows = tickets.map((ticket) => [
+    { text: `🔍 Открыть #${ticket.ticketNumber}`, callback_data: `SUP_OPEN:${ticket.ticketNumber}` },
+    { text: "📄 TXT", callback_data: `SUP_TXT:${ticket.ticketNumber}` },
+  ]);
+  const pagination = [];
+  if (page > 1) {
+    pagination.push({ text: "◀️ Назад", callback_data: `${listCallback}:${page - 1}` });
+  }
+  if (page < totalPages) {
+    pagination.push({ text: "▶️ Далее", callback_data: `${listCallback}:${page + 1}` });
+  }
+  if (pagination.length) rows.push(pagination);
+  return { reply_markup: { inline_keyboard: rows } };
+};
 
-const buildTicketListKeyboard = (tickets, prefix, backCallback, includeOpen = true) => ({
+const buildUserTicketListKeyboard = (tickets, backCallback) => ({
   reply_markup: {
     inline_keyboard: [
-      ...tickets.flatMap((ticket) => {
-        const row = [];
-        if (includeOpen) {
-          row.push({ text: `🔍 Открыть #${ticket.ticketNumber}`, callback_data: `SUP_OPEN:${ticket.ticketNumber}` });
-        }
-        row.push({ text: "📄 TXT", callback_data: `${prefix}_LOG_TXT:${ticket.ticketNumber}` });
-        return [row];
-      }),
+      ...tickets.map((ticket) => [{ text: "📄 TXT", callback_data: `USER_LOG_TXT:${ticket.ticketNumber}` }]),
       [{ text: "⬅️ Назад", callback_data: backCallback }],
     ],
   },
 });
+
+const ANALYTICS_PERIOD_LABELS = {
+  today: "Сегодня",
+  yesterday: "Вчера",
+  "7d": "7 дней",
+  "30d": "30 дней",
+};
+
+const ANALYTICS_SECTION_LABELS = {
+  money: "💳 Деньги",
+  funnel: "🔻 Воронка",
+  support: "🆘 Поддержка",
+};
 
 export default function callbackHandler(bot, pool) {
   const supportConfig = getSupportConfig();
@@ -224,7 +246,7 @@ export default function callbackHandler(bot, pool) {
           text,
           {
             parse_mode: "HTML",
-            ...buildSupportReplyKeyboard(userId, ticketNumber, "open"),
+            ...buildSupportTicketInlineKeyboard(userId, ticketNumber),
           }
         ),
         supportConfig.supportMessageTimeoutMs,
@@ -275,8 +297,22 @@ export default function callbackHandler(bot, pool) {
   };
   const formatTicketStatusLabel = (status) => {
     if (status === "closed") return "закрыт";
-    if (status === "in_progress") return "в работе";
-    return "открыт";
+    if (status === "in_progress" || status === "open") return "в работе";
+    return "в работе";
+  };
+  const formatTicketStatusTitle = (status) => {
+    if (status === "closed") return "Закрыто";
+    if (status === "in_progress" || status === "open") return "В работе";
+    return "В работе";
+  };
+  const appendTicketStatusMessage = (ticketNumber, status, createdAt = Date.now()) => {
+    appendTicketMessage({
+      id: `${ticketNumber}-system-status-${createdAt}`,
+      ticketNumber,
+      from: "system",
+      text: `Статус обращения изменен: ${formatTicketStatusTitle(status)}.`,
+      createdAt,
+    });
   };
   const paginateTickets = (tickets, page, pageSize) => {
     const total = tickets.length;
@@ -290,13 +326,6 @@ export default function callbackHandler(bot, pool) {
       totalPages,
     };
   };
-  const formatTicketList = (tickets) =>
-    tickets
-      .map((ticket) => {
-        const createdAt = new Date(ticket.createdAt).toLocaleString("ru-RU");
-        return `• №${ticket.ticketNumber} от ${createdAt}`;
-      })
-      .join("\n");
   const getTelegramPermalink = (chatId, messageId) => {
     if (!chatId || !messageId) return null;
     const internalId = String(chatId).replace("-100", "");
@@ -312,45 +341,382 @@ export default function callbackHandler(bot, pool) {
     if (ticket?.userId) return `tg://user?id=${ticket.userId}`;
     return null;
   };
-  const buildSupportListEntry = (ticket) => {
-    const createdAt = new Date(ticket.createdAt).toLocaleString("ru-RU");
-    const ticketLink = getTicketPermalink(ticket);
-    const statusLabel = formatTicketStatusLabel(ticket.status);
-    const usernameLabel = ticket.username ? `@${String(ticket.username).replace(/^@/, "")}` : `ID ${ticket.userId}`;
-    const userLink = getUserLink(ticket);
-    const wrapLink = (text, href) => (href ? `<a href="${href}">${text}</a>` : text);
-    return `• ${wrapLink(createdAt, ticketLink)} | ${wrapLink(
-      `№${ticket.ticketNumber}`,
-      ticketLink
-    )} | ${wrapLink(usernameLabel, userLink)} | ${wrapLink(statusLabel, ticketLink)}`;
+  const buildTicketListText = (tickets) =>
+    tickets
+      .map((ticket, index) => {
+        const createdAt = new Date(ticket.createdAt).toLocaleString("ru-RU");
+        const username = ticket.username ? `@${String(ticket.username).replace(/^@/, "")}` : "не указан";
+        const statusLabel = formatTicketStatusLabel(ticket.status);
+        return `${index + 1}) №${ticket.ticketNumber} • ${createdAt} • ${username} • ${statusLabel}`;
+      })
+      .join("\n");
+  const getTimeZoneOffsetMs = (date, timeZone) => {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      hour12: false,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).formatToParts(date);
+    const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const asUtc = Date.UTC(
+      Number(lookup.year),
+      Number(lookup.month) - 1,
+      Number(lookup.day),
+      Number(lookup.hour),
+      Number(lookup.minute),
+      Number(lookup.second)
+    );
+    return asUtc - date.getTime();
   };
-  const buildSupportListText = (tickets) => tickets.map((ticket) => buildSupportListEntry(ticket)).join("\n");
-  const buildSupportListFooterKeyboard = (backCallback = "SUP_MENU_HOME") => ({
+  const getStartOfDayMs = (date, timeZone) => {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+    const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    const utcMidnight = Date.UTC(Number(lookup.year), Number(lookup.month) - 1, Number(lookup.day), 0, 0, 0);
+    const offset = getTimeZoneOffsetMs(new Date(utcMidnight), timeZone);
+    return utcMidnight - offset;
+  };
+  const getPeriodBounds = (key) => {
+    const tz = "Europe/Amsterdam";
+    const now = new Date();
+    if (key === "today") {
+      return { from: getStartOfDayMs(now, tz), to: now.getTime() };
+    }
+    if (key === "yesterday") {
+      const todayStart = getStartOfDayMs(now, tz);
+      const yesterdayStart = todayStart - 24 * 60 * 60 * 1000;
+      return { from: yesterdayStart, to: todayStart - 1 };
+    }
+    const days = key === "30d" ? 30 : 7;
+    return { from: now.getTime() - days * 24 * 60 * 60 * 1000, to: now.getTime() };
+  };
+  const formatPeriodRu = (key) => ANALYTICS_PERIOD_LABELS[key] || "7 дней";
+  const formatNumberRu = (value) => Number(value || 0).toLocaleString("ru-RU");
+  const formatPercent = (value) => (Number.isFinite(value) ? (value * 100).toFixed(1) : "—");
+  const formatDurationRu = (ms) => {
+    if (!Number.isFinite(ms)) return "—";
+    const totalSeconds = Math.max(Math.round(ms / 1000), 0);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    return `${hours}ч ${minutes}м`;
+  };
+  const buildAnalyticsKeyboard = (period, section) => ({
     reply_markup: {
-      inline_keyboard: [[{ text: "⬅️ Назад", callback_data: backCallback }, { text: "❌ Закрыть окно", callback_data: "SUP_CLOSE_WINDOW" }]],
+      inline_keyboard: [
+        [
+          { text: "Сегодня", callback_data: "AN_P:today" },
+          { text: "Вчера", callback_data: "AN_P:yesterday" },
+          { text: "7 дней", callback_data: "AN_P:7d" },
+          { text: "30 дней", callback_data: "AN_P:30d" },
+        ],
+        [
+          { text: "💳 Деньги", callback_data: "AN_S:money" },
+          { text: "🔻 Воронка", callback_data: "AN_S:funnel" },
+          { text: "🆘 Поддержка", callback_data: "AN_S:support" },
+        ],
+        [
+          { text: "⬇️ Экспорт CSV", callback_data: "AN_E:menu" },
+          { text: "◀️ Назад", callback_data: "AN_BACK:root" },
+        ],
+      ],
     },
   });
-  const buildSupportDialogKeyboard = (ticket, backCallback = "SUP_MENU_HOME") => {
-    const isClosed = ticket.status === "closed";
-    const rows = [
-      [{ text: "📄 Скачать TXT", callback_data: `SUPPORT_LOG_TXT:${ticket.ticketNumber}` }],
-    ];
-    if (!isClosed) {
-      rows.unshift([{ text: "✉️ Ответить на последнее сообщение", callback_data: `SUPPORT_REPLY:${ticket.ticketNumber}:${ticket.userId}` }]);
-      rows.unshift([{ text: "🟡 Присвоить статус «В работе»", callback_data: `SUPPORT_SET_IN_PROGRESS:${ticket.ticketNumber}:${ticket.userId}` }]);
+  const buildAnalyticsExportKeyboard = () => ({
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "CSV: оплаты", callback_data: "AN_E:payments" }],
+        [{ text: "CSV: воронка", callback_data: "AN_E:funnel" }],
+        [{ text: "CSV: поддержка", callback_data: "AN_E:support" }],
+        [{ text: "◀️ Назад", callback_data: "AN_E:back" }],
+      ],
+    },
+  });
+  const getMoneyMetrics = (from, to) => {
+    const payments = listPayments().filter(
+      (payment) =>
+        payment &&
+        payment.status === "paid" &&
+        Number(payment.createdAt || 0) >= from &&
+        Number(payment.createdAt || 0) <= to
+    );
+    const revenueSum = payments.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const paymentsCount = payments.length;
+    const payingUsers = new Set(payments.map((item) => item.internalUserId)).size;
+    const aov = paymentsCount ? revenueSum / paymentsCount : 0;
+    const arppu = payingUsers ? revenueSum / payingUsers : 0;
+    const byTariff = payments.reduce((acc, item) => {
+      const key = item.tariff || "—";
+      acc[key] = acc[key] || { sum: 0, count: 0 };
+      acc[key].sum += Number(item.amount || 0);
+      acc[key].count += 1;
+      return acc;
+    }, {});
+    const byProvider = payments.reduce((acc, item) => {
+      const key = item.provider || "—";
+      acc[key] = acc[key] || { sum: 0, count: 0 };
+      acc[key].sum += Number(item.amount || 0);
+      acc[key].count += 1;
+      return acc;
+    }, {});
+    return {
+      revenueSum,
+      paymentsCount,
+      payingUsers,
+      aov,
+      arppu,
+      byTariff,
+      byProvider,
+    };
+  };
+  const getFunnelMetrics = (from, to) => {
+    const events = listAuditLog().filter(
+      (entry) => Number(entry.createdAt || 0) >= from && Number(entry.createdAt || 0) <= to
+    );
+    const countDistinct = (action) =>
+      new Set(events.filter((entry) => entry.action === action).map((entry) => entry.internalUserId)).size;
+    const newUsers = countDistinct("user_started");
+    const consents = countDistinct("consent_accepted");
+    const selectedTariff = countDistinct("tariff_selected");
+    const paymentStarted = countDistinct("payment_initiated");
+    const paid = countDistinct("payment_succeeded");
+    return {
+      newUsers,
+      consents,
+      selectedTariff,
+      paymentStarted,
+      paid,
+    };
+  };
+  const getSupportMetrics = (from, to) => {
+    const ticketsAll = getTicketsByStatus([]);
+    const created = ticketsAll.filter(
+      (ticket) => Number(ticket.createdAt || 0) >= from && Number(ticket.createdAt || 0) <= to
+    );
+    const closed = ticketsAll.filter(
+      (ticket) => Number(ticket.closedAt || 0) >= from && Number(ticket.closedAt || 0) <= to
+    );
+    const inWorkNow = ticketsAll.filter((ticket) => ticket.status !== "closed").length;
+    const firstResponseTimes = [];
+    const closeTimes = [];
+    const reasons = {};
+    created.forEach((ticket) => {
+      const messages = getTicketMessages(ticket.ticketNumber);
+      const firstUser = messages.find((msg) => msg.from === "user");
+      const firstSupport = messages.find((msg) => msg.from === "support");
+      if (firstUser && firstSupport) {
+        firstResponseTimes.push(Number(firstSupport.createdAt) - Number(firstUser.createdAt));
+      }
+      if (ticket.closedAt) {
+        closeTimes.push(Number(ticket.closedAt) - Number(ticket.createdAt));
+      }
+      if (firstUser?.text) {
+        const text = firstUser.text.toLowerCase();
+        const reason =
+          text.includes("оплат") || text.includes("платеж")
+            ? "Оплата"
+            : text.includes("возврат")
+            ? "Возврат"
+            : text.includes("не работает") || text.includes("ошибка")
+            ? "Ошибка/не работает"
+            : text.includes("доступ")
+            ? "Доступ"
+            : "Другое";
+        reasons[reason] = (reasons[reason] || 0) + 1;
+      }
+    });
+    const avgFirstResponse =
+      firstResponseTimes.length > 0
+        ? firstResponseTimes.reduce((sum, value) => sum + value, 0) / firstResponseTimes.length
+        : null;
+    const avgClose =
+      closeTimes.length > 0 ? closeTimes.reduce((sum, value) => sum + value, 0) / closeTimes.length : null;
+    const topReasons = Object.entries(reasons)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3);
+    return {
+      ticketsCreated: created.length,
+      ticketsClosed: closed.length,
+      ticketsInWorkNow: inWorkNow,
+      avgFirstResponse,
+      avgClose,
+      topReasons,
+    };
+  };
+  const renderAnalyticsText = (periodKey, sectionKey) => {
+    const { from, to } = getPeriodBounds(periodKey);
+    const periodRu = formatPeriodRu(periodKey);
+    if (sectionKey === "funnel") {
+      const funnel = getFunnelMetrics(from, to);
+      const base = funnel.newUsers || 0;
+      const percent = (value) => (base ? formatPercent(value / base) : "—");
+      return [
+        `🔻 Воронка за ${periodRu}`,
+        "",
+        `Новые пользователи: ${funnel.newUsers || "—"}`,
+        `Приняли согласия: ${funnel.consents || "—"} (${percent(funnel.consents)}%)`,
+        `Выбрали тариф: ${funnel.selectedTariff || "—"} (${percent(funnel.selectedTariff)}%)`,
+        `Перешли к оплате: ${funnel.paymentStarted || "—"} (${percent(funnel.paymentStarted)}%)`,
+        `Оплатили: ${funnel.paid || "—"} (${percent(funnel.paid)}%)`,
+        "",
+        `Конверсия в оплату: ${percent(funnel.paid)}%`,
+      ].join("\n");
     }
-    rows.push([{ text: "⬅️ Назад", callback_data: backCallback }, { text: "❌ Закрыть окно", callback_data: "SUP_CLOSE_WINDOW" }]);
-    return { reply_markup: { inline_keyboard: rows } };
+    if (sectionKey === "support") {
+      const support = getSupportMetrics(from, to);
+      const reasonsLines = support.topReasons.length
+        ? support.topReasons.map(([key, value]) => `• ${key}: ${value}`).join("\n")
+        : "—";
+      return [
+        `🆘 Поддержка за ${periodRu}`,
+        "",
+        `Новых обращений: ${support.ticketsCreated}`,
+        `В работе сейчас: ${support.ticketsInWorkNow}`,
+        `Закрыто за период: ${support.ticketsClosed}`,
+        `Среднее до первого ответа: ${formatDurationRu(support.avgFirstResponse)}`,
+        `Среднее до закрытия: ${formatDurationRu(support.avgClose)}`,
+        "",
+        "Топ причин:",
+        reasonsLines,
+      ].join("\n");
+    }
+    const money = getMoneyMetrics(from, to);
+    const byTariffLines = Object.entries(money.byTariff)
+      .map(([key, stats]) => `• ${key}: ${formatNumberRu(stats.sum)} ₽ (${stats.count})`)
+      .join("\n") || "—";
+    const byProviderLines = Object.entries(money.byProvider)
+      .map(([key, stats]) => `• ${key}: ${formatNumberRu(stats.sum)} ₽ (${stats.count})`)
+      .join("\n") || "—";
+    return [
+      `📊 Экономика за ${periodRu}`,
+      "",
+      `Выручка: ${formatNumberRu(money.revenueSum)} ₽`,
+      `Оплат: ${money.paymentsCount}`,
+      `Платящих пользователей: ${money.payingUsers}`,
+      `Средний чек: ${formatNumberRu(money.aov)} ₽`,
+      `ARPPU: ${formatNumberRu(money.arppu)} ₽`,
+      "",
+      "По тарифам:",
+      byTariffLines || "—",
+      "",
+      "По способу оплаты:",
+      byProviderLines || "—",
+    ].join("\n");
+  };
+  const renderAnalyticsScreen = async (ctx, periodKey, sectionKey) => {
+    const text = ["📊 Аналитика", "Выберите период и раздел", "", renderAnalyticsText(periodKey, sectionKey)].join(
+      "\n"
+    );
+    await ctx.reply(text, { parse_mode: "HTML", ...buildAnalyticsKeyboard(periodKey, sectionKey) });
+  };
+  const buildCsv = (headers, rows) => {
+    const bom = "\uFEFF";
+    const escapeCell = (value) => {
+      const text = String(value ?? "");
+      if (text.includes('"') || text.includes(",") || text.includes("\n")) {
+        return `"${text.replace(/\"/g, '""')}"`;
+      }
+      return text;
+    };
+    const lines = [
+      headers.map(escapeCell).join(","),
+      ...rows.map((row) => row.map(escapeCell).join(",")),
+    ];
+    return `${bom}${lines.join("\n")}\n`;
+  };
+  const formatAnalyticsStatus = (status) => {
+    if (status === "closed") return "ЗАКРЫТО";
+    if (status === "in_progress" || status === "open") return "В РАБОТЕ";
+    return "В РАБОТЕ";
+  };
+  const sendAnalyticsCsv = async (ctx, key, periodKey) => {
+    if (!["payments", "funnel", "support"].includes(key)) return;
+    const { from, to } = getPeriodBounds(periodKey);
+    const periodLabel = periodKey;
+    const filePath = path.join(os.tmpdir(), `analytics-${key}-${periodKey}.csv`);
+    let headers = [];
+    let rows = [];
+    if (key === "payments") {
+      headers = ["Дата", "Сумма", "Валюта", "Тариф", "Провайдер", "Статус", "ID платежа", "ID пользователя"];
+      rows = listPayments()
+        .filter((payment) => Number(payment.createdAt || 0) >= from && Number(payment.createdAt || 0) <= to)
+        .map((payment) => [
+          new Date(payment.createdAt || 0).toLocaleString("ru-RU"),
+          payment.amount || 0,
+          payment.currency || "RUB",
+          payment.tariff || "—",
+          payment.provider || "—",
+          payment.status || "—",
+          payment.paymentId || "—",
+          payment.internalUserId || "—",
+        ]);
+    } else if (key === "funnel") {
+      headers = ["Шаг", "Пользователей", "Период"];
+      const funnel = getFunnelMetrics(from, to);
+      rows = [
+        ["Новые пользователи", funnel.newUsers || 0, periodLabel],
+        ["Приняли согласия", funnel.consents || 0, periodLabel],
+        ["Выбрали тариф", funnel.selectedTariff || 0, periodLabel],
+        ["Перешли к оплате", funnel.paymentStarted || 0, periodLabel],
+        ["Оплатили", funnel.paid || 0, periodLabel],
+      ];
+    } else {
+      headers = ["Тикет", "Статус", "Создан", "Закрыт", "Время до 1-го ответа (сек)", "Время до закрытия (сек)", "ID пользователя"];
+      const tickets = getTicketsByStatus([]).filter(
+        (ticket) => Number(ticket.createdAt || 0) >= from && Number(ticket.createdAt || 0) <= to
+      );
+      rows = tickets.map((ticket) => {
+        const messages = getTicketMessages(ticket.ticketNumber);
+        const firstUser = messages.find((msg) => msg.from === "user");
+        const firstSupport = messages.find((msg) => msg.from === "support");
+        const frt =
+          firstUser && firstSupport ? Math.round((firstSupport.createdAt - firstUser.createdAt) / 1000) : "—";
+        const ttr = ticket.closedAt ? Math.round((ticket.closedAt - ticket.createdAt) / 1000) : "—";
+        return [
+          ticket.ticketNumber,
+          formatAnalyticsStatus(ticket.status),
+          new Date(ticket.createdAt || 0).toLocaleString("ru-RU"),
+          ticket.closedAt ? new Date(ticket.closedAt).toLocaleString("ru-RU") : "—",
+          frt,
+          ttr,
+          ticket.userId,
+        ];
+      });
+    }
+    try {
+      await fsPromises.writeFile(filePath, buildCsv(headers, rows), "utf8");
+      await ctx.replyWithDocument({ source: filePath, filename: `analytics-${key}-${periodKey}.csv` });
+      await fsPromises.unlink(filePath).catch(() => {});
+    } catch (error) {
+      console.error("❌ sendAnalyticsCsv failed:", {
+        message: error?.message,
+        code: error?.code,
+        response: error?.response,
+        stack: error?.stack,
+      });
+      await ctx.reply("⚠️ Не удалось сформировать CSV.");
+    }
+  };
+  const getLatestConversationText = (ticket, fallbackText) => {
+    const messages = getTicketMessages(ticket.ticketNumber);
+    const lastNonSystem = [...messages].reverse().find((entry) => entry.from !== "system");
+    return fallbackText || lastNonSystem?.text || messages.at(-1)?.text || "—";
   };
   const updateSupportChatMessage = async (ticket, messageText) => {
     if (!ticket?.supportChatMessageId || !supportConfig.supportTarget) return;
-    const messages = getTicketMessages(ticket.ticketNumber);
-    const lastMessageText = messageText || messages.at(-1)?.text || "—";
+    const lastMessageText = getLatestConversationText(ticket, messageText);
     const createdAt = new Date(ticket.createdAt).toLocaleString("ru-RU");
     const ticketLink = getTicketPermalink(ticket);
     const payload = {
       parse_mode: "HTML",
-      ...buildSupportReplyKeyboard(ticket.userId, ticket.ticketNumber, ticket.status),
+      ...buildSupportTicketInlineKeyboard(ticket.userId, ticket.ticketNumber),
     };
     try {
       await bot.telegram.editMessageText(
@@ -418,39 +784,104 @@ export default function callbackHandler(bot, pool) {
     }
     return `${header}\n\n${body}`;
   };
-  const buildSupportMenuPayload = () => {
-    const inProgressCount = getTicketsByStatus(["in_progress"]).length;
-    return {
-      parse_mode: "HTML",
-      ...buildSupportStaticMenuKeyboard(inProgressCount),
-    };
-  };
   const sendSupportMenu = async (ctx) => {
-    await ctx.reply(textTemplates.supportSupportMenu, buildSupportMenuPayload());
+    const tickets = getTicketsByStatus([]);
+    const freshCount = tickets.filter((ticket) => ticket.status === "open").length;
+    const workCount = tickets.filter((ticket) => ticket.status === "in_progress").length;
+    await ctx.reply(textTemplates.supportSupportMenu, {
+      parse_mode: "HTML",
+      ...buildSupportBottomMenuKeyboard({ freshCount, workCount }),
+    });
   };
-  const showSupportTicketList = async (ctx, tickets, title, backCallback = "SUP_MENU_HOME") => {
+  const sendSupportMenuHidden = async (ctx) => {
+    await ctx.reply("Меню скрыто.", {
+      reply_markup: { remove_keyboard: true },
+    });
+  };
+  const buildListPayload = (items, page, totalPages, listCallback) => ({
+    parse_mode: "HTML",
+    ...buildTicketListKeyboard(items, listCallback, page, totalPages),
+  });
+  const sendTicketList = async (ctx, tickets, title, listCallback, page = 1, pageSize = 10) => {
     if (!tickets.length) {
       await ctx.reply(`${title}\n\n${textTemplates.supportTicketsEmpty}`, { parse_mode: "HTML" });
       return;
     }
-    const list = buildSupportListText(tickets);
-    await ctx.reply(`${title}\n\n${list}`, {
-      parse_mode: "HTML",
-      ...buildSupportListFooterKeyboard(backCallback),
+    const sorted = [...tickets].sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+    const { items, totalPages, page: safePage } = paginateTickets(sorted, page, pageSize);
+    const list = buildTicketListText(items);
+    await ctx.reply(`${title}\n\n${list}`, buildListPayload(items, safePage, totalPages, listCallback));
+  };
+  const sendMessageToExistingTicket = async ({ ctx, st, msgText, ticket, contact, username, name }) => {
+    const createdAtMs = Date.now();
+    const createdAt = new Date(createdAtMs).toLocaleString("ru-RU");
+    upsertUser({
+      internalUserId: ticket.userId,
+      username: ctx.from?.username || null,
+      name: name || null,
     });
+    setState(ticket.userId, {
+      supportMode: true,
+      supportWriteEnabled: false,
+      supportLastSentAt: Date.now(),
+      supportLastTicketNumber: ticket.ticketNumber,
+      supportLastTicketCreatedAtMs: ticket.createdAt,
+    });
+    appendTicketMessage({
+      id: `${ticket.ticketNumber}-user-${createdAtMs}`,
+      ticketNumber: ticket.ticketNumber,
+      from: "user",
+      text: msgText,
+      createdAt: createdAtMs,
+      telegramMessageId: ctx.message?.message_id || null,
+    });
+    const text = buildSupportMessage({
+      ticketNumber: ticket.ticketNumber,
+      userId: ticket.userId,
+      username: ticket.username || username,
+      name: ticket.name || name,
+      message: msgText,
+      contact: ticket.contact || contact,
+      plan: ticket.plan || st.plan,
+      createdAt,
+      ticketLink: getTicketPermalink(ticket),
+      statusLabel: formatTicketStatusLabel(ticket.status),
+    });
+    const supportResult = await sendToSupport(text, ticket.userId, ticket.ticketNumber);
+    if (supportResult.ok) {
+      const supportMessageId = supportResult.message?.message_id;
+      const permalink = getTelegramPermalink(supportConfig.supportChatIdNum, supportMessageId);
+      if (!ticket.supportChatMessageId && supportMessageId) {
+        updateTicket(ticket.ticketNumber, {
+          supportChatMessageId: supportMessageId || null,
+          telegramPermalink: permalink,
+        });
+      }
+      await updateSupportChatMessage(getTicket(ticket.ticketNumber), msgText);
+      await notifyUserDelivery(ticket.userId, textTemplates.supportMessageSent, ctx, buildUserSupportActionsKeyboard());
+      return true;
+    }
+    await notifyUserDelivery(
+      ticket.userId,
+      textTemplates.supportThanksFallback(getSupportLinkHtml(supportConfig)),
+      ctx
+    );
+    return false;
   };
   const closeSupportCase = async (ticketNumber, targetUserId, ctx, closedBy) => {
     const ticket = getTicket(ticketNumber);
     if (!ticket) return;
     const closedAt = Date.now();
     updateTicket(ticketNumber, { status: "closed", closedAt, closedBy });
-    appendTicketMessage({
-      id: `${ticketNumber}-system-${closedAt}`,
-      ticketNumber,
-      from: "system",
-      text: textTemplates.supportTicketArchived(ticketNumber),
-      createdAt: closedAt,
+    appendAuditLog({
+      action: "ticket_closed",
+      actor: closedBy === "user" ? "user" : "support",
+      entityType: "ticket",
+      entityId: ticketNumber,
+      internalUserId: targetUserId,
+      meta: { closedBy },
     });
+    appendTicketStatusMessage(ticketNumber, "closed", closedAt);
     const message = formatTicketClosed(ticketNumber, ticket.createdAt);
     if (supportConfig.supportTarget) {
       try {
@@ -472,12 +903,22 @@ export default function callbackHandler(bot, pool) {
   };
   const sendSupportLog = async (ticketNumber, ctx) => {
     const ticket = getTicket(ticketNumber);
-    if (!ticket || !supportConfig.supportTarget) return;
+    if (!ticket) return;
     const messages = getTicketMessages(ticketNumber);
     try {
       const filePath = await writeTicketLogTxt(ticket, messages);
       const filename = `ticket-${ticketNumber}.txt`;
-      await bot.telegram.sendDocument(supportConfig.supportTarget, { source: filePath, filename });
+      const targetChatId = ctx.chat?.id || supportConfig.supportTarget;
+      if (!targetChatId) return;
+      await bot.telegram.sendDocument(targetChatId, { source: filePath, filename });
+      await fsPromises.unlink(filePath).catch(() => {});
+      appendAuditLog({
+        action: "dialog_exported_txt",
+        actor: "support",
+        entityType: "export",
+        entityId: ticketNumber,
+        internalUserId: ticket.userId,
+      });
     } catch (error) {
       console.error("❌ sendSupportLog failed:", {
         message: error?.message,
@@ -505,6 +946,7 @@ export default function callbackHandler(bot, pool) {
       const filePath = await writeTicketLogTxt(ticket, messages);
       const filename = `ticket-${ticketNumber}.txt`;
       await bot.telegram.sendDocument(userId, { source: filePath, filename });
+      await fsPromises.unlink(filePath).catch(() => {});
     } catch (error) {
       console.error("❌ sendUserLog failed:", {
         message: error?.message,
@@ -570,49 +1012,74 @@ export default function callbackHandler(bot, pool) {
     const msgText = (ctx.message?.text || "").trim();
     const supportSender = isSupportSender(ctx);
 
-    if (supportSender && msgText === "/support_menu") {
+    const isSupportChat = supportConfig.supportChatIdNum && ctx.chat?.id === supportConfig.supportChatIdNum;
+
+    if (supportSender && isSupportChat && msgText === "/support_menu") {
       await sendSupportMenu(ctx);
       return;
     }
+    if (supportSender && isSupportChat && msgText === "/analytics") {
+      const current = getState(userId);
+      const nextState = setState(userId, {
+        analyticsPeriod: current.analyticsPeriod || "7d",
+        analyticsSection: current.analyticsSection || "money",
+      });
+      await renderAnalyticsScreen(ctx, nextState.analyticsPeriod, nextState.analyticsSection);
+      return;
+    }
 
-    if (supportSender) {
-      if (msgText === SUPPORT_MENU_LABELS.all) {
+    if (supportSender && isSupportChat) {
+      const supportMenuKey = resolveSupportMenuKey(msgText);
+      if (supportMenuKey === "all") {
         const tickets = getTicketsByStatus([]);
-        await showSupportTicketList(ctx, tickets, "📚 Все обращения пользователей");
+        await sendTicketList(ctx, tickets, "📚 Все обращения", "SUP_LG_A", 1, 10);
         return;
       }
-      if (msgText === SUPPORT_MENU_LABELS.open) {
-        const tickets = getTicketsByStatus(["open", "in_progress"]);
-        await showSupportTicketList(ctx, tickets, "📌 Открытые обращения");
+      if (supportMenuKey === "fresh") {
+        const tickets = getTicketsByStatus(["open"]);
+        await sendTicketList(ctx, tickets, "🆕 Новые", "SUP_LG_N", 1, 10);
         return;
       }
-      if (msgText === SUPPORT_MENU_LABELS.closed) {
+      if (supportMenuKey === "work") {
+        const tickets = getTicketsByStatus(["in_progress"]);
+        await sendTicketList(ctx, tickets, "🟡 В работе", "SUP_LG_W", 1, 10);
+        return;
+      }
+      if (supportMenuKey === "closed") {
         const tickets = getTicketsByStatus(["closed"]);
-        await showSupportTicketList(ctx, tickets, "✅ Закрытые обращения");
+        await sendTicketList(ctx, tickets, "📁 Закрытые", "SUP_LG_C", 1, 10);
         return;
       }
-      if (msgText === SUPPORT_MENU_LABELS.search) {
-        setSupportSearchMode(userId, { mode: "global" });
+      if (supportMenuKey === "search") {
+        setSupportSearchMode(userId, { mode: "global", step: "support_search_query" });
         await ctx.reply("🔎 Введите запрос для поиска (ticketNumber, userId или username).");
         return;
       }
-      if (msgText.startsWith("🟡 В работе:")) {
-        await sendSupportMenu(ctx);
+      if (supportMenuKey === "analytics") {
+        const current = getState(userId);
+        const nextState = setState(userId, {
+          analyticsPeriod: current.analyticsPeriod || "7d",
+          analyticsSection: current.analyticsSection || "money",
+        });
+        await renderAnalyticsScreen(ctx, nextState.analyticsPeriod, nextState.analyticsSection);
+        return;
+      }
+      if (supportMenuKey === "hide") {
+        await sendSupportMenuHidden(ctx);
         return;
       }
     }
 
-    if (supportSender && msgText.startsWith("/support_search")) {
-      setSupportSearchMode(userId, { mode: "global" });
+    if (supportSender && isSupportChat && msgText.startsWith("/support_search")) {
+      setSupportSearchMode(userId, { mode: "global", step: "support_search_query" });
       await ctx.reply("🔎 Введите запрос для поиска (ticketNumber, userId или username).");
       return;
     }
 
-    if (supportSender && !msgText.startsWith("/")) {
-      const isSupportChat = supportConfig.supportChatIdNum && ctx.chat?.id === supportConfig.supportChatIdNum;
-      const searchMode = isSupportChat ? getSupportSearchMode(userId) : null;
-      const replyMode = isSupportChat ? getSupportReplyMode(userId) : null;
-      if (searchMode?.mode && !replyMode?.targetUserId) {
+    if (supportSender && isSupportChat && !msgText.startsWith("/")) {
+      const searchMode = getSupportSearchMode(userId);
+      const replyMode = getSupportReplyMode(userId);
+      if (searchMode?.mode && searchMode?.step === "support_search_query" && !replyMode?.targetUserId) {
         clearSupportSearchMode(userId);
         const query = msgText.toLowerCase();
         const tickets = getTicketsByStatus([]);
@@ -630,18 +1097,14 @@ export default function callbackHandler(bot, pool) {
           await ctx.reply("🔎 Ничего не найдено.", { parse_mode: "HTML" });
           return;
         }
-        const { items, page, totalPages } = paginateTickets(results, 1, 5);
+        const { items } = paginateTickets(results, 1, 10);
         const header = [
           "🔎 Результаты поиска",
           "",
           `Всего: ${results.length}`,
-          `Страница: ${page}/${totalPages}`,
         ].join("\n");
-        const list = buildSupportListText(items);
-        await ctx.reply(`${header}\n\n${list}`, {
-          parse_mode: "HTML",
-          ...buildSupportListFooterKeyboard("SUP_MENU_HOME"),
-        });
+        const list = buildTicketListText(items);
+        await ctx.reply(`${header}\n\n${list}`, buildListPayload(items, 1, 1, "SUP_LG_A"));
         return;
       }
       if (replyMode?.targetUserId && replyMode?.ticketNumber) {
@@ -663,9 +1126,18 @@ export default function callbackHandler(bot, pool) {
             createdAt,
             telegramMessageId: sent?.message_id || null,
           });
+          appendAuditLog({
+            action: "support_reply_sent",
+            actor: "support",
+            entityType: "ticket",
+            entityId: replyMode.ticketNumber,
+            internalUserId: replyMode.targetUserId,
+            meta: { via: "reply_mode" },
+          });
           const ticket = getTicket(replyMode.ticketNumber);
           if (ticket && ticket.status === "open") {
             updateTicket(replyMode.ticketNumber, { status: "in_progress" });
+            appendTicketStatusMessage(replyMode.ticketNumber, "in_progress");
           }
         } catch (error) {
           console.error("❌ support reply mode send failed:", {
@@ -724,9 +1196,18 @@ export default function callbackHandler(bot, pool) {
             createdAt,
             telegramMessageId: sent?.message_id || null,
           });
+          appendAuditLog({
+            action: "support_reply_sent",
+            actor: "support",
+            entityType: "ticket",
+            entityId: ticketNumber,
+            internalUserId: targetUserId,
+            meta: { via: "command" },
+          });
           const ticket = getTicket(ticketNumber);
           if (ticket && ticket.status === "open") {
             updateTicket(ticketNumber, { status: "in_progress" });
+            appendTicketStatusMessage(ticketNumber, "in_progress");
           }
         }
       } catch (e) {
@@ -770,10 +1251,31 @@ export default function callbackHandler(bot, pool) {
       const createdAt = new Date(createdAtMs).toLocaleString("ru-RU");
       const username = ctx.from?.username ? `@${ctx.from.username}` : "не указан";
       const name = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ");
+      upsertUser({
+        internalUserId: userId,
+        username: ctx.from?.username || null,
+        name: name || null,
+      });
+      const existingTicketNumber = st.supportLastTicketNumber;
+      const existingTicket = existingTicketNumber ? getTicket(existingTicketNumber) : null;
+      if (existingTicket && existingTicket.status !== "closed") {
+        await sendMessageToExistingTicket({
+          ctx,
+          st,
+          msgText,
+          ticket: existingTicket,
+          contact,
+          username,
+          name,
+        });
+        return;
+      }
+
       const ticketNumber = bumpTicketNumber(st, userId);
       createTicket({
         ticketNumber,
         userId,
+        internalUserId: userId,
         username,
         name,
         plan: st.plan,
@@ -781,6 +1283,14 @@ export default function callbackHandler(bot, pool) {
         createdAt: createdAtMs,
         status: "open",
         supportChatId: supportConfig.supportTarget,
+      });
+      appendAuditLog({
+        action: "ticket_created",
+        actor: "user",
+        entityType: "ticket",
+        entityId: ticketNumber,
+        internalUserId: userId,
+        meta: { source: "support_message" },
       });
       appendTicketMessage({
         id: `${ticketNumber}-user-${createdAtMs}`,
@@ -839,15 +1349,36 @@ export default function callbackHandler(bot, pool) {
         return;
       }
 
-      const contact = st.supportContact || "не указан";
       const createdAtMs = Date.now();
       const createdAt = new Date(createdAtMs).toLocaleString("ru-RU");
+      const contact = st.supportContact || "не указан";
       const username = ctx.from?.username ? `@${ctx.from.username}` : "не указан";
       const name = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ");
+      const existingTicketNumber = st.supportLastTicketNumber;
+      const existingTicket = existingTicketNumber ? getTicket(existingTicketNumber) : null;
+      if (existingTicket && existingTicket.status !== "closed") {
+        await sendMessageToExistingTicket({
+          ctx,
+          st,
+          msgText,
+          ticket: existingTicket,
+          contact,
+          username,
+          name,
+        });
+        return;
+      }
+
       const ticketNumber = bumpTicketNumber(st, userId);
+      upsertUser({
+        internalUserId: userId,
+        username: ctx.from?.username || null,
+        name: name || null,
+      });
       createTicket({
         ticketNumber,
         userId,
+        internalUserId: userId,
         username,
         name,
         plan: st.plan,
@@ -855,6 +1386,14 @@ export default function callbackHandler(bot, pool) {
         createdAt: createdAtMs,
         status: "open",
         supportChatId: supportConfig.supportTarget,
+      });
+      appendAuditLog({
+        action: "ticket_created",
+        actor: "user",
+        entityType: "ticket",
+        entityId: ticketNumber,
+        internalUserId: userId,
+        meta: { source: "support_followup" },
       });
       appendTicketMessage({
         id: `${ticketNumber}-user-${createdAtMs}`,
@@ -935,32 +1474,57 @@ export default function callbackHandler(bot, pool) {
         reply_markup: { inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]] },
       };
 
-      if (data === "SUP_MENU_HOME") {
-        if (!isSupportSender(ctx)) {
+      if (data.startsWith("AN_")) {
+        if (!isSupportSender(ctx) || !(supportConfig.supportChatIdNum && ctx.chat?.id === supportConfig.supportChatIdNum)) {
           await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
           return;
         }
-        await sendSupportMenu(ctx);
-        return;
-      }
-
-      if (data === "SUP_CLOSE_WINDOW") {
-        if (!isSupportSender(ctx)) {
-          await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
+        const current = getState(userId);
+        const period = current.analyticsPeriod || "7d";
+        const section = current.analyticsSection || "money";
+        const editAnalytics = async (nextPeriod, nextSection) => {
+          const text = ["📊 Аналитика", "Выберите период и раздел", "", renderAnalyticsText(nextPeriod, nextSection)].join(
+            "\n"
+          );
+          try {
+            await ctx.editMessageText(text, { parse_mode: "HTML", ...buildAnalyticsKeyboard(nextPeriod, nextSection) });
+          } catch {
+            await ctx.reply(text, { parse_mode: "HTML", ...buildAnalyticsKeyboard(nextPeriod, nextSection) });
+          }
+        };
+        if (data === "AN_BACK:root") {
+          await sendSupportMenu(ctx);
           return;
         }
-        try {
-          await ctx.deleteMessage();
-        } catch (error) {
-          console.error("❌ SUP_CLOSE_WINDOW delete failed:", {
-            message: error?.message,
-            code: error?.code,
-            response: error?.response,
-            stack: error?.stack,
-          });
+        if (data.startsWith("AN_P:")) {
+          const nextPeriod = data.split(":")[1] || "7d";
+          setState(userId, { analyticsPeriod: nextPeriod });
+          await editAnalytics(nextPeriod, section);
+          return;
         }
-        await sendSupportMenu(ctx);
-        return;
+        if (data.startsWith("AN_S:")) {
+          const nextSection = data.split(":")[1] || "money";
+          setState(userId, { analyticsSection: nextSection });
+          await editAnalytics(period, nextSection);
+          return;
+        }
+        if (data === "AN_E:menu") {
+          try {
+            await ctx.editMessageText("⬇️ Экспорт CSV", { parse_mode: "HTML", ...buildAnalyticsExportKeyboard() });
+          } catch {
+            await ctx.reply("⬇️ Экспорт CSV", { parse_mode: "HTML", ...buildAnalyticsExportKeyboard() });
+          }
+          return;
+        }
+        if (data === "AN_E:back") {
+          await editAnalytics(period, section);
+          return;
+        }
+        if (data.startsWith("AN_E:")) {
+          const key = data.split(":")[1];
+          await sendAnalyticsCsv(ctx, key, period);
+          return;
+        }
       }
 
       if (data === "SUPPORT_USER_WRITE") {
@@ -983,16 +1547,6 @@ export default function callbackHandler(bot, pool) {
         return;
       }
 
-      if (data === "SUPPORT_REPLY_EXIT") {
-        if (!isSupportSender(ctx)) {
-          await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
-          return;
-        }
-        clearSupportReplyMode(userId);
-        await ctx.reply(textTemplates.supportReplyModeExited, { parse_mode: "HTML" });
-        return;
-      }
-
       if (data.startsWith("SUP_TU:")) {
         if (!isSupportSender(ctx)) {
           await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
@@ -1002,56 +1556,71 @@ export default function callbackHandler(bot, pool) {
         const ticket = getTicket(token);
         const userIdValue = ticket ? ticket.userId : token;
         const ticketsForUser = getTicketsByUser(userIdValue, []);
-        const title = "👤 Обращения пользователя";
-        await showSupportTicketList(ctx, ticketsForUser, title);
+        const activeCount = ticketsForUser.filter((item) => item.status !== "closed").length;
+        const closedCount = ticketsForUser.filter((item) => item.status === "closed").length;
+        const header = [
+          "👤 Обращения пользователя",
+          "",
+          `Активные: ${activeCount}`,
+          `Закрытые: ${closedCount}`,
+        ].join("\n");
+        await ctx.reply(header, {
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "🟡 В работе", callback_data: `SUP_LU_W:${userIdValue}:1` }],
+              [{ text: "📁 Закрытые", callback_data: `SUP_LU_C:${userIdValue}:1` }],
+              [{ text: "⬅️ Назад", callback_data: "SUP_LG_A:1" }],
+            ],
+          },
+        });
         return;
       }
 
-      if (data === "SUP_GM") {
-        if (!isSupportSender(ctx)) {
-          await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
-          return;
-        }
-        const tickets = getTicketsByStatus([]);
-        await showSupportTicketList(ctx, tickets, "📚 Все обращения пользователей");
-        return;
-      }
-
-      if (data === "SUP_SEARCH") {
-        if (!isSupportSender(ctx)) {
-          await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
-          return;
-        }
-        setSupportSearchMode(userId, { mode: "global" });
-        await ctx.reply("🔎 Введите запрос для поиска (ticketNumber, userId или username).");
-        return;
-      }
-
-      if (data.startsWith("SUP_LU_A:") || data.startsWith("SUP_LU_C:")) {
+      if (data.startsWith("SUP_LU_W:") || data.startsWith("SUP_LU_C:")) {
         if (!isSupportSender(ctx)) {
           await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
           return;
         }
         const [action, targetUserId, pageStr] = data.split(":");
         const page = Number(pageStr || 1);
-        const statuses = action === "SUP_LU_A" ? ["open", "in_progress"] : ["closed"];
+        const statuses = action === "SUP_LU_W" ? ["open", "in_progress"] : ["closed"];
         const tickets = getTicketsByUser(targetUserId, statuses);
-        const title = action === "SUP_LU_A" ? "📌 Активные обращения" : "📁 Закрытые обращения";
-        await showSupportTicketList(ctx, tickets, title);
+        const title = action === "SUP_LU_W" ? "🟡 В работе" : "📁 Закрытые";
+        await sendTicketList(ctx, tickets, title, `${action}:${targetUserId}`, page, 10);
         return;
       }
 
-      if (data.startsWith("SUP_LG_A:") || data.startsWith("SUP_LG_C:")) {
+      if (
+        data.startsWith("SUP_LG_A:") ||
+        data.startsWith("SUP_LG_N:") ||
+        data.startsWith("SUP_LG_W:") ||
+        data.startsWith("SUP_LG_C:")
+      ) {
         if (!isSupportSender(ctx)) {
           await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
           return;
         }
         const [action, pageStr] = data.split(":");
         const page = Number(pageStr || 1);
-        const statuses = action === "SUP_LG_A" ? ["open", "in_progress"] : ["closed"];
+        const statuses =
+          action === "SUP_LG_C"
+            ? ["closed"]
+            : action === "SUP_LG_W"
+            ? ["in_progress"]
+            : action === "SUP_LG_N"
+            ? ["open"]
+            : [];
         const tickets = getTicketsByStatus(statuses);
-        const title = action === "SUP_LG_A" ? "📌 Активные обращения" : "📁 Закрытые обращения";
-        await showSupportTicketList(ctx, tickets, title);
+        const title =
+          action === "SUP_LG_C"
+            ? "📁 Закрытые"
+            : action === "SUP_LG_W"
+            ? "🟡 В работе"
+            : action === "SUP_LG_N"
+            ? "🆕 Новые"
+            : "📚 Все обращения";
+        await sendTicketList(ctx, tickets, title, action, page, 10);
         return;
       }
 
@@ -1068,30 +1637,12 @@ export default function callbackHandler(bot, pool) {
         }
         await ctx.reply(buildTicketDialogText(ticket), {
           parse_mode: "HTML",
-          ...buildSupportDialogKeyboard(ticket),
+          ...buildSupportTicketInlineKeyboard(ticket.userId, ticket.ticketNumber),
         });
         return;
       }
 
-      if (data.startsWith("SUP_DIALOG:")) {
-        if (!isSupportSender(ctx)) {
-          await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
-          return;
-        }
-        const ticketNumber = data.replace("SUP_DIALOG:", "");
-        const ticket = getTicket(ticketNumber);
-        if (!ticket) {
-          await ctx.answerCbQuery("⚠️ Тикет не найден.", { show_alert: true });
-          return;
-        }
-        await ctx.reply(buildTicketDialogText(ticket), {
-          parse_mode: "HTML",
-          ...buildSupportDialogKeyboard(ticket),
-        });
-        return;
-      }
-
-      if (data.startsWith("SUPPORT_REPLY:")) {
+      if (data.startsWith("SUP_REPLY:") || data.startsWith("SUPPORT_REPLY:")) {
         if (!isSupportSender(ctx)) {
           await ctx.answerCbQuery("⚠️ Недостаточно прав для ответа.", { show_alert: true });
           return;
@@ -1106,15 +1657,8 @@ export default function callbackHandler(bot, pool) {
         setSupportReplyMode(userId, { ticketNumber, targetUserId });
         const ticket = getTicket(ticketNumber);
         if (ticket && ticket.status === "open") {
-          const now = Date.now();
           updateTicket(ticketNumber, { status: "in_progress" });
-          appendTicketMessage({
-            id: `${ticketNumber}-system-${now}`,
-            ticketNumber,
-            from: "system",
-            text: "Статус: in_progress",
-            createdAt: now,
-          });
+          appendTicketStatusMessage(ticketNumber, "in_progress");
         }
         await ctx.reply(
           `✉️ Режим ответа включен для тикета ${ticketNumber}.\nСледующее сообщение отправится пользователю.`
@@ -1122,7 +1666,7 @@ export default function callbackHandler(bot, pool) {
         return;
       }
 
-      if (data.startsWith("SUPPORT_CLOSE:")) {
+      if (data.startsWith("SUP_CLOSE:") || data.startsWith("SUPPORT_CLOSE:")) {
         if (!isSupportSender(ctx)) {
           await ctx.answerCbQuery("⚠️ Недостаточно прав для закрытия.", { show_alert: true });
           return;
@@ -1144,51 +1688,12 @@ export default function callbackHandler(bot, pool) {
         return;
       }
 
-      if (data.startsWith("SUPPORT_SET_IN_PROGRESS:")) {
+      if (data.startsWith("SUP_TXT:")) {
         if (!isSupportSender(ctx)) {
           await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
           return;
         }
-        const parts = data.split(":");
-        const ticketNumber = parts[1];
-        const targetUserId = Number(parts[2]);
-        const ticket = getTicket(ticketNumber);
-        if (!ticket || !Number.isFinite(targetUserId)) {
-          await ctx.answerCbQuery("⚠️ Некорректные данные обращения.", { show_alert: true });
-          return;
-        }
-        if (ticket.status === "closed") {
-          await ctx.answerCbQuery("⚠️ Обращение уже закрыто.", { show_alert: true });
-          return;
-        }
-        if (ticket.status !== "in_progress") {
-          const now = Date.now();
-          updateTicket(ticketNumber, { status: "in_progress" });
-          appendTicketMessage({
-            id: `${ticketNumber}-system-${now}`,
-            ticketNumber,
-            from: "system",
-            text: "Статус: in_progress",
-            createdAt: now,
-          });
-        }
-        await notifyUserDelivery(
-          targetUserId,
-          textTemplates.supportTicketInProgress,
-          ctx,
-          buildUserSupportActionsKeyboard()
-        );
-        await updateSupportChatMessage(getTicket(ticketNumber));
-        await ctx.answerCbQuery("✅ Статус обновлен.");
-        return;
-      }
-
-      if (data.startsWith("SUPPORT_LOG_TXT:")) {
-        if (!isSupportSender(ctx)) {
-          await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
-          return;
-        }
-        const ticketNumber = data.replace("SUPPORT_LOG_TXT:", "");
+        const ticketNumber = data.replace("SUP_TXT:", "");
         if (!getTicket(ticketNumber)) {
           await ctx.answerCbQuery("⚠️ Тикет не найден.", { show_alert: true });
           return;
@@ -1197,12 +1702,14 @@ export default function callbackHandler(bot, pool) {
         return;
       }
 
-      if (data.startsWith("SUP_LOG_TXT:")) {
+      if (data.startsWith("SUPPORT_LOG_TXT:") || data.startsWith("SUP_LOG_TXT:")) {
         if (!isSupportSender(ctx)) {
           await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
           return;
         }
-        const ticketNumber = data.replace("SUP_LOG_TXT:", "");
+        const ticketNumber = data.includes("SUPPORT_LOG_TXT:")
+          ? data.replace("SUPPORT_LOG_TXT:", "")
+          : data.replace("SUP_LOG_TXT:", "");
         if (!getTicket(ticketNumber)) {
           await ctx.answerCbQuery("⚠️ Тикет не найден.", { show_alert: true });
           return;
@@ -1392,8 +1899,8 @@ export default function callbackHandler(bot, pool) {
         return;
       }
       await safeEdit(
-        `${title}\n\n${formatTicketList(tickets)}`,
-        buildTicketListKeyboard(tickets, "USER", "MENU_SUPPORT", false)
+        `${title}\n\n${buildTicketListText(tickets)}`,
+        buildUserTicketListKeyboard(tickets, "MENU_SUPPORT")
       );
       return;
     }
@@ -1406,8 +1913,8 @@ export default function callbackHandler(bot, pool) {
         return;
       }
       await safeEdit(
-        `${title}\n\n${formatTicketList(tickets)}`,
-        buildTicketListKeyboard(tickets, "USER", "MENU_SUPPORT", false)
+        `${title}\n\n${buildTicketListText(tickets)}`,
+        buildUserTicketListKeyboard(tickets, "MENU_SUPPORT")
       );
       return;
     }
@@ -1418,8 +1925,7 @@ export default function callbackHandler(bot, pool) {
         return;
       }
       const tickets = getTicketsByStatus(["open", "in_progress"]);
-      const title = textTemplates.supportSupportActiveTitle;
-      await showSupportTicketList(ctx, tickets, title);
+      await sendTicketList(ctx, tickets, "🟡 В работе", "SUP_LG_W", 1, 10);
       return;
     }
 
@@ -1429,8 +1935,7 @@ export default function callbackHandler(bot, pool) {
         return;
       }
       const tickets = getTicketsByStatus(["closed"]);
-      const title = textTemplates.supportSupportClosedTitle;
-      await showSupportTicketList(ctx, tickets, title);
+      await sendTicketList(ctx, tickets, "📁 Закрытые", "SUP_LG_C", 1, 10);
       return;
     }
 
@@ -1697,6 +2202,13 @@ export default function callbackHandler(bot, pool) {
         }
       }
       resetUserData(userId);
+      appendAuditLog({
+        action: "user_data_deleted",
+        actor: "user",
+        entityType: "user",
+        entityId: String(userId),
+        internalUserId: userId,
+      });
       await safeEdit(textTemplates.deleteDone, backToMenuKb);
       return;
     }
