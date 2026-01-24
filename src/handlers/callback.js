@@ -25,7 +25,7 @@ import {
 } from "../utils/storage.js";
 import { withTimeout } from "../utils/with-timeout.js";
 import { getSupportConfig } from "../utils/support-config.js";
-import { writeTicketLogPdf, writeTicketLogTxt } from "../utils/support-logs.js";
+import { writeTicketLogTxt } from "../utils/support-logs.js";
 
 const SUPPORT_SPAM_WINDOW_MS = Number(process.env.SUPPORT_SPAM_WINDOW_MS || 60000);
 
@@ -39,12 +39,24 @@ const getSupportMenuLinkHtml = (supportConfig) =>
     ? `<a href="${supportConfig.supportMenuLink}">пункт меню «🆘 Поддержка»</a>`
     : "пункт меню «🆘 Поддержка»";
 
-const buildSupportMessage = ({ ticketNumber, userId, username, name, message, contact, plan, createdAt }) =>
+const buildSupportMessage = ({
+  ticketNumber,
+  userId,
+  username,
+  name,
+  message,
+  contact,
+  plan,
+  createdAt,
+  ticketLink,
+  statusLabel,
+}) =>
   [
     "🆘 SUPPORT",
     "",
-    `Номер обращения: ${ticketNumber}`,
-    `Дата: ${createdAt}`,
+    `Номер обращения: ${ticketLink ? `<a href="${ticketLink}">${ticketNumber}</a>` : ticketNumber}`,
+    `Дата: ${ticketLink ? `<a href="${ticketLink}">${createdAt}</a>` : createdAt}`,
+    `Статус: ${ticketLink ? `<a href="${ticketLink}">${statusLabel || "открыт"}</a>` : statusLabel || "открыт"}`,
     "",
     "User:",
     username || "не указан",
@@ -59,18 +71,52 @@ const buildSupportMessage = ({ ticketNumber, userId, username, name, message, co
     `Дата: ${createdAt}`,
   ].join("\n");
 
-const buildSupportReplyKeyboard = (userId, ticketNumber) => ({
-  reply_markup: {
-    inline_keyboard: [
-      [{ text: "📂 Обращения пользователя", callback_data: `SUP_TU:${ticketNumber}` }],
-      [{ text: "✉️ Ответить", callback_data: `SUPPORT_REPLY:${ticketNumber}:${userId}` }],
-      [{ text: "✅ Закрыть обращение", callback_data: `SUPPORT_CLOSE:${ticketNumber}:${userId}` }],
-      [
-        { text: "📄 Лог .txt", callback_data: `SUPPORT_LOG_TXT:${ticketNumber}` },
-        { text: "📑 Лог PDF", callback_data: `SUPPORT_LOG_PDF:${ticketNumber}` },
-      ],
-      [{ text: "⛔️ Выйти из режима ответа", callback_data: "SUPPORT_REPLY_EXIT" }],
+const buildSupportReplyKeyboard = (userId, ticketNumber, status) => {
+  const isClosed = status === "closed";
+  const rows = [
+    [
+      { text: "📖 Открыть диалог", callback_data: `SUP_DIALOG:${ticketNumber}` },
+      { text: "📂 Обращения пользователя", callback_data: `SUP_TU:${ticketNumber}` },
     ],
+  ];
+  if (!isClosed) {
+    rows.push([{ text: "🟡 Присвоить статус «В работе»", callback_data: `SUPPORT_SET_IN_PROGRESS:${ticketNumber}:${userId}` }]);
+    rows.push([{ text: "✉️ Ответить на последнее сообщение", callback_data: `SUPPORT_REPLY:${ticketNumber}:${userId}` }]);
+  }
+  const logRow = [{ text: "📄 Скачать TXT", callback_data: `SUPPORT_LOG_TXT:${ticketNumber}` }];
+  if (!isClosed) {
+    logRow.push({ text: "✅ Закрыть обращение", callback_data: `SUPPORT_CLOSE:${ticketNumber}:${userId}` });
+  }
+  rows.push(logRow);
+  rows.push([
+    { text: "⬅️ Назад", callback_data: "SUP_MENU_HOME" },
+    { text: "❌ Закрыть окно", callback_data: "SUP_CLOSE_WINDOW" },
+  ]);
+  return {
+    reply_markup: {
+      inline_keyboard: rows,
+    },
+  };
+};
+
+const SUPPORT_MENU_LABELS = {
+  all: "📚 Все обращения пользователей",
+  search: "🔎 Поиск по номеру обращения или нику",
+  open: "📌 Открытые обращения",
+  closed: "✅ Закрытые обращения",
+};
+
+const buildSupportStaticMenuKeyboard = (inProgressCount = 0) => ({
+  reply_markup: {
+    keyboard: [
+      [SUPPORT_MENU_LABELS.open, SUPPORT_MENU_LABELS.closed],
+      [SUPPORT_MENU_LABELS.all],
+      [SUPPORT_MENU_LABELS.search],
+      [`🟡 В работе: ${inProgressCount}`],
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: false,
+    is_persistent: true,
   },
 });
 
@@ -103,6 +149,7 @@ const buildUserSupportMenuKeyboard = () => ({
   reply_markup: {
     inline_keyboard: [
       [{ text: "✍️ Написать в поддержку", callback_data: "SUPPORT_START" }],
+      [{ text: "✅ Закрыть обращение", callback_data: "SUPPORT_USER_CLOSE" }],
       [{ text: "📌 Мои активные обращения", callback_data: "SUPPORT_USER_ACTIVE" }],
       [{ text: "✅ Мои закрытые обращения", callback_data: "SUPPORT_USER_CLOSED" }],
       [{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }],
@@ -120,13 +167,7 @@ const buildSupportMenuKeyboard = () => ({
   },
 });
 
-const buildTicketListKeyboard = (
-  tickets,
-  prefix,
-  backCallback,
-  includePdf = false,
-  includeOpen = true
-) => ({
+const buildTicketListKeyboard = (tickets, prefix, backCallback, includeOpen = true) => ({
   reply_markup: {
     inline_keyboard: [
       ...tickets.flatMap((ticket) => {
@@ -135,9 +176,6 @@ const buildTicketListKeyboard = (
           row.push({ text: `🔍 Открыть #${ticket.ticketNumber}`, callback_data: `SUP_OPEN:${ticket.ticketNumber}` });
         }
         row.push({ text: "📄 TXT", callback_data: `${prefix}_LOG_TXT:${ticket.ticketNumber}` });
-        if (includePdf) {
-          row.push({ text: "📑 PDF", callback_data: `${prefix}_LOG_PDF:${ticket.ticketNumber}` });
-        }
         return [row];
       }),
       [{ text: "⬅️ Назад", callback_data: backCallback }],
@@ -184,7 +222,10 @@ export default function callbackHandler(bot, pool) {
         bot.telegram.sendMessage(
           supportConfig.supportTarget,
           text,
-          buildSupportReplyKeyboard(userId, ticketNumber)
+          {
+            parse_mode: "HTML",
+            ...buildSupportReplyKeyboard(userId, ticketNumber, "open"),
+          }
         ),
         supportConfig.supportMessageTimeoutMs,
         "Support message send timed out"
@@ -232,20 +273,10 @@ export default function callbackHandler(bot, pool) {
     const createdAt = new Date(createdAtMs).toLocaleString("ru-RU");
     return textTemplates.supportTicketClosedNotice(ticketNumber, createdAt);
   };
-  const buildTicketSummary = (ticket) => {
-    const createdAt = new Date(ticket.createdAt).toLocaleString("ru-RU");
-    const usernameLine = ticket.username ? `@${String(ticket.username).replace(/^@/, "")}` : "не указан";
-    const permalink = ticket.telegramPermalink
-      ? `<a href="${ticket.telegramPermalink}">Открыть сообщение</a>`
-      : "не найдено";
-    return [
-      `<b>Обращение №${ticket.ticketNumber}</b>`,
-      `Дата: ${createdAt}`,
-      `User ID: ${ticket.userId}`,
-      `Username: ${usernameLine}`,
-      `Статус: ${ticket.status || "open"}`,
-      `Permalink: ${permalink}`,
-    ].join("\n");
+  const formatTicketStatusLabel = (status) => {
+    if (status === "closed") return "закрыт";
+    if (status === "in_progress") return "в работе";
+    return "открыт";
   };
   const paginateTickets = (tickets, page, pageSize) => {
     const total = tickets.length;
@@ -259,16 +290,6 @@ export default function callbackHandler(bot, pool) {
       totalPages,
     };
   };
-  const buildPaginationRow = (action, page, totalPages, extra) => {
-    const buttons = [];
-    if (page > 1) {
-      buttons.push({ text: "◀️ Prev", callback_data: `${action}:${page - 1}${extra || ""}` });
-    }
-    if (page < totalPages) {
-      buttons.push({ text: "Next ▶️", callback_data: `${action}:${page + 1}${extra || ""}` });
-    }
-    return buttons.length ? [buttons] : [];
-  };
   const formatTicketList = (tickets) =>
     tickets
       .map((ticket) => {
@@ -281,6 +302,142 @@ export default function callbackHandler(bot, pool) {
     const internalId = String(chatId).replace("-100", "");
     if (!internalId || internalId.startsWith("-")) return null;
     return `https://t.me/c/${internalId}/${messageId}`;
+  };
+  const getTicketPermalink = (ticket) =>
+    ticket?.telegramPermalink ||
+    getTelegramPermalink(supportConfig.supportChatIdNum, ticket?.supportChatMessageId);
+  const getUserLink = (ticket) => {
+    const username = ticket?.username ? String(ticket.username).replace(/^@/, "") : "";
+    if (username) return `https://t.me/${username}`;
+    if (ticket?.userId) return `tg://user?id=${ticket.userId}`;
+    return null;
+  };
+  const buildSupportListEntry = (ticket) => {
+    const createdAt = new Date(ticket.createdAt).toLocaleString("ru-RU");
+    const ticketLink = getTicketPermalink(ticket);
+    const statusLabel = formatTicketStatusLabel(ticket.status);
+    const usernameLabel = ticket.username ? `@${String(ticket.username).replace(/^@/, "")}` : `ID ${ticket.userId}`;
+    const userLink = getUserLink(ticket);
+    const wrapLink = (text, href) => (href ? `<a href="${href}">${text}</a>` : text);
+    return `• ${wrapLink(createdAt, ticketLink)} | ${wrapLink(
+      `№${ticket.ticketNumber}`,
+      ticketLink
+    )} | ${wrapLink(usernameLabel, userLink)} | ${wrapLink(statusLabel, ticketLink)}`;
+  };
+  const buildSupportListText = (tickets) => tickets.map((ticket) => buildSupportListEntry(ticket)).join("\n");
+  const buildSupportListFooterKeyboard = (backCallback = "SUP_MENU_HOME") => ({
+    reply_markup: {
+      inline_keyboard: [[{ text: "⬅️ Назад", callback_data: backCallback }, { text: "❌ Закрыть окно", callback_data: "SUP_CLOSE_WINDOW" }]],
+    },
+  });
+  const buildSupportDialogKeyboard = (ticket, backCallback = "SUP_MENU_HOME") => {
+    const isClosed = ticket.status === "closed";
+    const rows = [
+      [{ text: "📄 Скачать TXT", callback_data: `SUPPORT_LOG_TXT:${ticket.ticketNumber}` }],
+    ];
+    if (!isClosed) {
+      rows.unshift([{ text: "✉️ Ответить на последнее сообщение", callback_data: `SUPPORT_REPLY:${ticket.ticketNumber}:${ticket.userId}` }]);
+      rows.unshift([{ text: "🟡 Присвоить статус «В работе»", callback_data: `SUPPORT_SET_IN_PROGRESS:${ticket.ticketNumber}:${ticket.userId}` }]);
+    }
+    rows.push([{ text: "⬅️ Назад", callback_data: backCallback }, { text: "❌ Закрыть окно", callback_data: "SUP_CLOSE_WINDOW" }]);
+    return { reply_markup: { inline_keyboard: rows } };
+  };
+  const updateSupportChatMessage = async (ticket, messageText) => {
+    if (!ticket?.supportChatMessageId || !supportConfig.supportTarget) return;
+    const messages = getTicketMessages(ticket.ticketNumber);
+    const lastMessageText = messageText || messages.at(-1)?.text || "—";
+    const createdAt = new Date(ticket.createdAt).toLocaleString("ru-RU");
+    const ticketLink = getTicketPermalink(ticket);
+    const payload = {
+      parse_mode: "HTML",
+      ...buildSupportReplyKeyboard(ticket.userId, ticket.ticketNumber, ticket.status),
+    };
+    try {
+      await bot.telegram.editMessageText(
+        supportConfig.supportTarget,
+        ticket.supportChatMessageId,
+        undefined,
+        buildSupportMessage({
+          ticketNumber: ticket.ticketNumber,
+          userId: ticket.userId,
+          username: ticket.username,
+          name: ticket.name,
+          message: lastMessageText,
+          contact: ticket.contact,
+          plan: ticket.plan,
+          createdAt,
+          ticketLink,
+          statusLabel: formatTicketStatusLabel(ticket.status),
+        }),
+        payload
+      );
+    } catch (error) {
+      console.error("❌ updateSupportChatMessage failed:", {
+        message: error?.message,
+        code: error?.code,
+        response: error?.response,
+        stack: error?.stack,
+      });
+    }
+  };
+  const buildTicketDialogText = (ticket) => {
+    const createdAt = new Date(ticket.createdAt).toLocaleString("ru-RU");
+    const statusLabel = formatTicketStatusLabel(ticket.status);
+    const ticketLink = getTicketPermalink(ticket);
+    const usernameLabel = ticket.username ? `@${String(ticket.username).replace(/^@/, "")}` : `ID ${ticket.userId}`;
+    const userLink = getUserLink(ticket);
+    const wrapLink = (text, href) => (href ? `<a href="${href}">${text}</a>` : text);
+    const header = [
+      "<b>📖 Диалог обращения</b>",
+      `Номер: ${wrapLink(`№${ticket.ticketNumber}`, ticketLink)}`,
+      `Дата: ${wrapLink(createdAt, ticketLink)}`,
+      `Пользователь: ${wrapLink(usernameLabel, userLink)}`,
+      `Статус: ${wrapLink(statusLabel, ticketLink)}`,
+      "",
+      "<b>Последние сообщения</b>",
+    ].join("\n");
+    const messages = getTicketMessages(ticket.ticketNumber);
+    const lines = messages.map((entry) => {
+      const fromLabel = entry.from === "support" ? "Поддержка" : entry.from === "system" ? "Система" : "Пользователь";
+      const time = entry.createdAt ? new Date(entry.createdAt).toLocaleString("ru-RU") : "";
+      const text = entry.text || "";
+      return `• [${time}] <b>${fromLabel}:</b> ${text}`;
+    });
+    let body = lines.join("\n");
+    const maxLen = 3500;
+    if (`${header}\n\n${body}`.length > maxLen) {
+      const trimmed = [];
+      let total = header.length + 2;
+      for (let i = lines.length - 1; i >= 0; i -= 1) {
+        const next = `${lines[i]}\n` + trimmed.join("\n");
+        if (total + next.length > maxLen) break;
+        trimmed.unshift(lines[i]);
+        total += lines[i].length + 1;
+      }
+      body = ["…", ...trimmed].join("\n");
+    }
+    return `${header}\n\n${body}`;
+  };
+  const buildSupportMenuPayload = () => {
+    const inProgressCount = getTicketsByStatus(["in_progress"]).length;
+    return {
+      parse_mode: "HTML",
+      ...buildSupportStaticMenuKeyboard(inProgressCount),
+    };
+  };
+  const sendSupportMenu = async (ctx) => {
+    await ctx.reply(textTemplates.supportSupportMenu, buildSupportMenuPayload());
+  };
+  const showSupportTicketList = async (ctx, tickets, title, backCallback = "SUP_MENU_HOME") => {
+    if (!tickets.length) {
+      await ctx.reply(`${title}\n\n${textTemplates.supportTicketsEmpty}`, { parse_mode: "HTML" });
+      return;
+    }
+    const list = buildSupportListText(tickets);
+    await ctx.reply(`${title}\n\n${list}`, {
+      parse_mode: "HTML",
+      ...buildSupportListFooterKeyboard(backCallback),
+    });
   };
   const closeSupportCase = async (ticketNumber, targetUserId, ctx, closedBy) => {
     const ticket = getTicket(ticketNumber);
@@ -313,16 +470,13 @@ export default function callbackHandler(bot, pool) {
     }
     await notifyUserDelivery(targetUserId, message, ctx, buildUserSupportActionsKeyboard());
   };
-  const sendSupportLog = async (ticketNumber, format, ctx) => {
+  const sendSupportLog = async (ticketNumber, ctx) => {
     const ticket = getTicket(ticketNumber);
     if (!ticket || !supportConfig.supportTarget) return;
     const messages = getTicketMessages(ticketNumber);
     try {
-      const filePath =
-        format === "pdf"
-          ? await writeTicketLogPdf(ticket, messages)
-          : await writeTicketLogTxt(ticket, messages);
-      const filename = `ticket-${ticketNumber}.${format === "pdf" ? "pdf" : "txt"}`;
+      const filePath = await writeTicketLogTxt(ticket, messages);
+      const filename = `ticket-${ticketNumber}.txt`;
       await bot.telegram.sendDocument(supportConfig.supportTarget, { source: filePath, filename });
     } catch (error) {
       console.error("❌ sendSupportLog failed:", {
@@ -343,16 +497,13 @@ export default function callbackHandler(bot, pool) {
       }
     }
   };
-  const sendUserLog = async (ticketNumber, format, ctx, userId) => {
+  const sendUserLog = async (ticketNumber, ctx, userId) => {
     const ticket = getTicket(ticketNumber);
     if (!ticket || String(ticket.userId) !== String(userId)) return;
     const messages = getTicketMessages(ticketNumber);
     try {
-      const filePath =
-        format === "pdf"
-          ? await writeTicketLogPdf(ticket, messages)
-          : await writeTicketLogTxt(ticket, messages);
-      const filename = `ticket-${ticketNumber}.${format === "pdf" ? "pdf" : "txt"}`;
+      const filePath = await writeTicketLogTxt(ticket, messages);
+      const filename = `ticket-${ticketNumber}.txt`;
       await bot.telegram.sendDocument(userId, { source: filePath, filename });
     } catch (error) {
       console.error("❌ sendUserLog failed:", {
@@ -373,86 +524,9 @@ export default function callbackHandler(bot, pool) {
       }
     }
   };
-  const PAGE_SIZE = 5;
-  const getLatestTicketForUser = (userId) => {
-    const tickets = getTicketsByUser(userId, []);
-    if (!tickets.length) return null;
-    return [...tickets].sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))[0];
-  };
-  const buildPerUserMenu = (userId) => {
-    const latestTicket = getLatestTicketForUser(userId);
-    const username = latestTicket?.username
-      ? `@${String(latestTicket.username).replace(/^@/, "")}`
-      : "не указан";
-    const activeCount = getTicketsByUser(userId, ["open", "in_progress"]).length;
-    const closedCount = getTicketsByUser(userId, ["closed"]).length;
-    const header = [
-      `👤 Пользователь: ${username}`,
-      `ID: ${userId}`,
-      "",
-      `📌 Активные: ${activeCount}`,
-      `📁 Закрытые: ${closedCount}`,
-    ].join("\n");
-    return {
-      header,
-      keyboard: {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "📌 Активные", callback_data: `SUP_LU_A:${userId}:1` }],
-            [{ text: "📁 Закрытые", callback_data: `SUP_LU_C:${userId}:1` }],
-            [{ text: "◀️ Назад", callback_data: latestTicket ? `SUP_OPEN:${latestTicket.ticketNumber}` : "SUP_GM" }],
-          ],
-        },
-      },
-    };
-  };
-  const buildGlobalMenu = () => {
-    const activeCount = getTicketsByStatus(["open", "in_progress"]).length;
-    const closedCount = getTicketsByStatus(["closed"]).length;
-    const header = [
-      "📚 Обращения (все пользователи)",
-      "",
-      `📌 Активные: ${activeCount}`,
-      `📁 Закрытые: ${closedCount}`,
-    ].join("\n");
-    return {
-      header,
-      keyboard: {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "📌 Активные", callback_data: "SUP_LG_A:1" }],
-            [{ text: "📁 Закрытые", callback_data: "SUP_LG_C:1" }],
-            [{ text: "🔎 Поиск", callback_data: "SUP_SEARCH" }],
-            [{ text: "◀️ Назад", callback_data: "SUPPORT_MENU" }],
-          ],
-        },
-      },
-    };
-  };
-  const buildTicketList = (tickets, page, actionPrefix, backCallback, includePdf) => {
-    const sorted = [...tickets].sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
-    const { items, totalPages, page: safePage } = paginateTickets(sorted, page, PAGE_SIZE);
-    const list = items
-      .map((ticket) => {
-        const createdAt = new Date(ticket.createdAt).toLocaleString("ru-RU");
-        const username = ticket.username ? `@${String(ticket.username).replace(/^@/, "")}` : "не указан";
-        return `#${ticket.ticketNumber} • ${createdAt} • ${username} • ${ticket.status || "open"}`;
-      })
-      .join("\n");
-    const paginationRow = buildPaginationRow(`${actionPrefix}`, safePage, totalPages, "");
-    const keyboard = buildTicketListKeyboard(items, "SUP", backCallback, includePdf);
-    if (paginationRow.length) {
-      keyboard.reply_markup.inline_keyboard = [
-        ...keyboard.reply_markup.inline_keyboard.slice(0, -1),
-        ...paginationRow,
-        keyboard.reply_markup.inline_keyboard.at(-1),
-      ];
-    }
-    return { list, keyboard };
-  };
   const shouldBlockUserMessage = (ctx, st, msgText) => {
     if (msgText.startsWith("/")) return false;
-    if (st.supportMode && st.supportWriteEnabled) return false;
+    if (st.supportMode) return false;
     if (st.step === "support_contact" || st.step === "support_contact_custom") return false;
     if (st.step === "wait_support_message" || st.step === "support_ready_to_message") return false;
     return !isSupportSender(ctx);
@@ -497,11 +571,35 @@ export default function callbackHandler(bot, pool) {
     const supportSender = isSupportSender(ctx);
 
     if (supportSender && msgText === "/support_menu") {
-      await ctx.reply(textTemplates.supportSupportMenu, {
-        parse_mode: "HTML",
-        ...buildSupportMenuKeyboard(),
-      });
+      await sendSupportMenu(ctx);
       return;
+    }
+
+    if (supportSender) {
+      if (msgText === SUPPORT_MENU_LABELS.all) {
+        const tickets = getTicketsByStatus([]);
+        await showSupportTicketList(ctx, tickets, "📚 Все обращения пользователей");
+        return;
+      }
+      if (msgText === SUPPORT_MENU_LABELS.open) {
+        const tickets = getTicketsByStatus(["open", "in_progress"]);
+        await showSupportTicketList(ctx, tickets, "📌 Открытые обращения");
+        return;
+      }
+      if (msgText === SUPPORT_MENU_LABELS.closed) {
+        const tickets = getTicketsByStatus(["closed"]);
+        await showSupportTicketList(ctx, tickets, "✅ Закрытые обращения");
+        return;
+      }
+      if (msgText === SUPPORT_MENU_LABELS.search) {
+        setSupportSearchMode(userId, { mode: "global" });
+        await ctx.reply("🔎 Введите запрос для поиска (ticketNumber, userId или username).");
+        return;
+      }
+      if (msgText.startsWith("🟡 В работе:")) {
+        await sendSupportMenu(ctx);
+        return;
+      }
     }
 
     if (supportSender && msgText.startsWith("/support_search")) {
@@ -511,8 +609,9 @@ export default function callbackHandler(bot, pool) {
     }
 
     if (supportSender && !msgText.startsWith("/")) {
-      const searchMode = getSupportSearchMode(userId);
-      const replyMode = getSupportReplyMode(userId);
+      const isSupportChat = supportConfig.supportChatIdNum && ctx.chat?.id === supportConfig.supportChatIdNum;
+      const searchMode = isSupportChat ? getSupportSearchMode(userId) : null;
+      const replyMode = isSupportChat ? getSupportReplyMode(userId) : null;
       if (searchMode?.mode && !replyMode?.targetUserId) {
         clearSupportSearchMode(userId);
         const query = msgText.toLowerCase();
@@ -538,16 +637,10 @@ export default function callbackHandler(bot, pool) {
           `Всего: ${results.length}`,
           `Страница: ${page}/${totalPages}`,
         ].join("\n");
-        const list = items
-          .map((ticket) => {
-            const createdAt = new Date(ticket.createdAt).toLocaleString("ru-RU");
-            const username = ticket.username ? `@${String(ticket.username).replace(/^@/, "")}` : "не указан";
-            return `#${ticket.ticketNumber} • ${createdAt} • ${username} • ${ticket.status || "open"}`;
-          })
-          .join("\n");
+        const list = buildSupportListText(items);
         await ctx.reply(`${header}\n\n${list}`, {
           parse_mode: "HTML",
-          ...buildTicketListKeyboard(items, "SUP", "SUP_GM", true),
+          ...buildSupportListFooterKeyboard("SUP_MENU_HOME"),
         });
         return;
       }
@@ -716,6 +809,8 @@ export default function callbackHandler(bot, pool) {
           supportChatMessageId: supportMessageId || null,
           telegramPermalink: permalink,
         });
+        const updatedTicket = getTicket(ticketNumber);
+        await updateSupportChatMessage(updatedTicket, msgText);
         setState(userId, {
           supportMode: true,
           supportWriteEnabled: false,
@@ -787,6 +882,8 @@ export default function callbackHandler(bot, pool) {
           supportChatMessageId: supportMessageId || null,
           telegramPermalink: permalink,
         });
+        const updatedTicket = getTicket(ticketNumber);
+        await updateSupportChatMessage(updatedTicket, msgText);
         setState(userId, {
           supportWriteEnabled: false,
           supportLastTicketNumber: ticketNumber,
@@ -838,6 +935,34 @@ export default function callbackHandler(bot, pool) {
         reply_markup: { inline_keyboard: [[{ text: "⬅️ В главное меню", callback_data: "MENU_HOME" }]] },
       };
 
+      if (data === "SUP_MENU_HOME") {
+        if (!isSupportSender(ctx)) {
+          await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
+          return;
+        }
+        await sendSupportMenu(ctx);
+        return;
+      }
+
+      if (data === "SUP_CLOSE_WINDOW") {
+        if (!isSupportSender(ctx)) {
+          await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
+          return;
+        }
+        try {
+          await ctx.deleteMessage();
+        } catch (error) {
+          console.error("❌ SUP_CLOSE_WINDOW delete failed:", {
+            message: error?.message,
+            code: error?.code,
+            response: error?.response,
+            stack: error?.stack,
+          });
+        }
+        await sendSupportMenu(ctx);
+        return;
+      }
+
       if (data === "SUPPORT_USER_WRITE") {
         setState(userId, { supportMode: true, supportWriteEnabled: true, step: "support_ready_to_message" });
         await ctx.reply(textTemplates.supportReadyToMessage, {
@@ -877,12 +1002,8 @@ export default function callbackHandler(bot, pool) {
         const ticket = getTicket(token);
         const userIdValue = ticket ? ticket.userId : token;
         const ticketsForUser = getTicketsByUser(userIdValue, []);
-        if (!ticketsForUser.length) {
-          await ctx.answerCbQuery("⚠️ Обращения не найдены.", { show_alert: true });
-          return;
-        }
-        const menu = buildPerUserMenu(userIdValue);
-        await ctx.reply(menu.header, { parse_mode: "HTML", ...menu.keyboard });
+        const title = "👤 Обращения пользователя";
+        await showSupportTicketList(ctx, ticketsForUser, title);
         return;
       }
 
@@ -891,8 +1012,8 @@ export default function callbackHandler(bot, pool) {
           await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
           return;
         }
-        const menu = buildGlobalMenu();
-        await ctx.reply(menu.header, { parse_mode: "HTML", ...menu.keyboard });
+        const tickets = getTicketsByStatus([]);
+        await showSupportTicketList(ctx, tickets, "📚 Все обращения пользователей");
         return;
       }
 
@@ -916,12 +1037,7 @@ export default function callbackHandler(bot, pool) {
         const statuses = action === "SUP_LU_A" ? ["open", "in_progress"] : ["closed"];
         const tickets = getTicketsByUser(targetUserId, statuses);
         const title = action === "SUP_LU_A" ? "📌 Активные обращения" : "📁 Закрытые обращения";
-        if (!tickets.length) {
-          await ctx.reply(`${title}\n\n${textTemplates.supportTicketsEmpty}`, { parse_mode: "HTML" });
-          return;
-        }
-        const { list, keyboard } = buildTicketList(tickets, page, action, `SUP_TU:${targetUserId}`, true);
-        await ctx.reply(`${title}\n\n${list}`, { parse_mode: "HTML", ...keyboard });
+        await showSupportTicketList(ctx, tickets, title);
         return;
       }
 
@@ -935,12 +1051,7 @@ export default function callbackHandler(bot, pool) {
         const statuses = action === "SUP_LG_A" ? ["open", "in_progress"] : ["closed"];
         const tickets = getTicketsByStatus(statuses);
         const title = action === "SUP_LG_A" ? "📌 Активные обращения" : "📁 Закрытые обращения";
-        if (!tickets.length) {
-          await ctx.reply(`${title}\n\n${textTemplates.supportTicketsEmpty}`, { parse_mode: "HTML" });
-          return;
-        }
-        const { list, keyboard } = buildTicketList(tickets, page, action, "SUP_GM", true);
-        await ctx.reply(`${title}\n\n${list}`, { parse_mode: "HTML", ...keyboard });
+        await showSupportTicketList(ctx, tickets, title);
         return;
       }
 
@@ -955,9 +1066,27 @@ export default function callbackHandler(bot, pool) {
           await ctx.answerCbQuery("⚠️ Тикет не найден.", { show_alert: true });
           return;
         }
-        await ctx.reply(buildTicketSummary(ticket), {
+        await ctx.reply(buildTicketDialogText(ticket), {
           parse_mode: "HTML",
-          ...buildSupportReplyKeyboard(ticket.userId, ticket.ticketNumber),
+          ...buildSupportDialogKeyboard(ticket),
+        });
+        return;
+      }
+
+      if (data.startsWith("SUP_DIALOG:")) {
+        if (!isSupportSender(ctx)) {
+          await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
+          return;
+        }
+        const ticketNumber = data.replace("SUP_DIALOG:", "");
+        const ticket = getTicket(ticketNumber);
+        if (!ticket) {
+          await ctx.answerCbQuery("⚠️ Тикет не найден.", { show_alert: true });
+          return;
+        }
+        await ctx.reply(buildTicketDialogText(ticket), {
+          parse_mode: "HTML",
+          ...buildSupportDialogKeyboard(ticket),
         });
         return;
       }
@@ -1015,6 +1144,45 @@ export default function callbackHandler(bot, pool) {
         return;
       }
 
+      if (data.startsWith("SUPPORT_SET_IN_PROGRESS:")) {
+        if (!isSupportSender(ctx)) {
+          await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
+          return;
+        }
+        const parts = data.split(":");
+        const ticketNumber = parts[1];
+        const targetUserId = Number(parts[2]);
+        const ticket = getTicket(ticketNumber);
+        if (!ticket || !Number.isFinite(targetUserId)) {
+          await ctx.answerCbQuery("⚠️ Некорректные данные обращения.", { show_alert: true });
+          return;
+        }
+        if (ticket.status === "closed") {
+          await ctx.answerCbQuery("⚠️ Обращение уже закрыто.", { show_alert: true });
+          return;
+        }
+        if (ticket.status !== "in_progress") {
+          const now = Date.now();
+          updateTicket(ticketNumber, { status: "in_progress" });
+          appendTicketMessage({
+            id: `${ticketNumber}-system-${now}`,
+            ticketNumber,
+            from: "system",
+            text: "Статус: in_progress",
+            createdAt: now,
+          });
+        }
+        await notifyUserDelivery(
+          targetUserId,
+          textTemplates.supportTicketInProgress,
+          ctx,
+          buildUserSupportActionsKeyboard()
+        );
+        await updateSupportChatMessage(getTicket(ticketNumber));
+        await ctx.answerCbQuery("✅ Статус обновлен.");
+        return;
+      }
+
       if (data.startsWith("SUPPORT_LOG_TXT:")) {
         if (!isSupportSender(ctx)) {
           await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
@@ -1025,36 +1193,21 @@ export default function callbackHandler(bot, pool) {
           await ctx.answerCbQuery("⚠️ Тикет не найден.", { show_alert: true });
           return;
         }
-        await sendSupportLog(ticketNumber, "txt", ctx);
+        await sendSupportLog(ticketNumber, ctx);
         return;
       }
 
-      if (data.startsWith("SUPPORT_LOG_PDF:")) {
+      if (data.startsWith("SUP_LOG_TXT:")) {
         if (!isSupportSender(ctx)) {
           await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
           return;
         }
-        const ticketNumber = data.replace("SUPPORT_LOG_PDF:", "");
+        const ticketNumber = data.replace("SUP_LOG_TXT:", "");
         if (!getTicket(ticketNumber)) {
           await ctx.answerCbQuery("⚠️ Тикет не найден.", { show_alert: true });
           return;
         }
-        await sendSupportLog(ticketNumber, "pdf", ctx);
-        return;
-      }
-
-      if (data.startsWith("SUP_LOG_TXT:") || data.startsWith("SUP_LOG_PDF:")) {
-        if (!isSupportSender(ctx)) {
-          await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
-          return;
-        }
-        const isPdf = data.startsWith("SUP_LOG_PDF:");
-        const ticketNumber = data.replace(isPdf ? "SUP_LOG_PDF:" : "SUP_LOG_TXT:", "");
-        if (!getTicket(ticketNumber)) {
-          await ctx.answerCbQuery("⚠️ Тикет не найден.", { show_alert: true });
-          return;
-        }
-        await sendSupportLog(ticketNumber, isPdf ? "pdf" : "txt", ctx);
+        await sendSupportLog(ticketNumber, ctx);
         return;
       }
 
@@ -1064,17 +1217,7 @@ export default function callbackHandler(bot, pool) {
           await ctx.answerCbQuery("⚠️ Тикет не найден.", { show_alert: true });
           return;
         }
-        await sendUserLog(ticketNumber, "txt", ctx, userId);
-        return;
-      }
-
-      if (data.startsWith("USER_LOG_PDF:")) {
-        const ticketNumber = data.replace("USER_LOG_PDF:", "");
-        if (!getTicket(ticketNumber)) {
-          await ctx.answerCbQuery("⚠️ Тикет не найден.", { show_alert: true });
-          return;
-        }
-        await sendUserLog(ticketNumber, "pdf", ctx, userId);
+        await sendUserLog(ticketNumber, ctx, userId);
         return;
       }
 
@@ -1250,7 +1393,7 @@ export default function callbackHandler(bot, pool) {
       }
       await safeEdit(
         `${title}\n\n${formatTicketList(tickets)}`,
-        buildTicketListKeyboard(tickets, "USER", "MENU_SUPPORT", false, false)
+        buildTicketListKeyboard(tickets, "USER", "MENU_SUPPORT", false)
       );
       return;
     }
@@ -1264,7 +1407,7 @@ export default function callbackHandler(bot, pool) {
       }
       await safeEdit(
         `${title}\n\n${formatTicketList(tickets)}`,
-        buildTicketListKeyboard(tickets, "USER", "MENU_SUPPORT", false, false)
+        buildTicketListKeyboard(tickets, "USER", "MENU_SUPPORT", false)
       );
       return;
     }
@@ -1276,14 +1419,7 @@ export default function callbackHandler(bot, pool) {
       }
       const tickets = getTicketsByStatus(["open", "in_progress"]);
       const title = textTemplates.supportSupportActiveTitle;
-      if (!tickets.length) {
-        await ctx.reply(`${title}\n\n${textTemplates.supportTicketsEmpty}`, { parse_mode: "HTML" });
-        return;
-      }
-      await ctx.reply(`${title}\n\n${formatTicketList(tickets)}`, {
-        parse_mode: "HTML",
-        ...buildTicketListKeyboard(tickets, "SUPPORT", "SUPPORT_MENU"),
-      });
+      await showSupportTicketList(ctx, tickets, title);
       return;
     }
 
@@ -1294,14 +1430,7 @@ export default function callbackHandler(bot, pool) {
       }
       const tickets = getTicketsByStatus(["closed"]);
       const title = textTemplates.supportSupportClosedTitle;
-      if (!tickets.length) {
-        await ctx.reply(`${title}\n\n${textTemplates.supportTicketsEmpty}`, { parse_mode: "HTML" });
-        return;
-      }
-      await ctx.reply(`${title}\n\n${formatTicketList(tickets)}`, {
-        parse_mode: "HTML",
-        ...buildTicketListKeyboard(tickets, "SUPPORT", "SUPPORT_MENU"),
-      });
+      await showSupportTicketList(ctx, tickets, title);
       return;
     }
 
@@ -1310,10 +1439,7 @@ export default function callbackHandler(bot, pool) {
         await ctx.answerCbQuery("⚠️ Недостаточно прав.", { show_alert: true });
         return;
       }
-      await ctx.reply(textTemplates.supportSupportMenu, {
-        parse_mode: "HTML",
-        ...buildSupportMenuKeyboard(),
-      });
+      await sendSupportMenu(ctx);
       return;
     }
 
