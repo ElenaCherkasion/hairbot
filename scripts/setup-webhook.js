@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import fetch from "node-fetch";
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
