@@ -38,11 +38,11 @@ function createPoolIfConfigured() {
 function getWebhookConfig() {
   // ОБЯЗАТЕЛЬНО задай WEBHOOK_BASE_URL в Render:
   // например: https://hairstyle-bot.onrender.com
-  const base = (process.env.WEBHOOK_BASE_URL || "").trim().replace(/\/+$/, "");
+  const baseUrl = (process.env.WEBHOOK_BASE_URL || "").trim().replace(/\/+$/, "");
   const path = (process.env.WEBHOOK_PATH || "/telegraf").trim();
 
-  if (!base) return null;
-  return { base, path, url: `${base}${path}` };
+  if (!baseUrl) return null;
+  return { baseUrl, path, url: `${baseUrl}${path}` };
 }
 
 function startKeepAlive() {
@@ -106,6 +106,12 @@ export async function startBot() {
     // WEBHOOK MODE (рекомендуется для Render)
     console.log("✅ Using WEBHOOK mode:", wh.url);
 
+    try {
+      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+    } catch (e) {
+      console.warn("⚠️ deleteWebhook failed (can ignore):", e?.message || e);
+    }
+
     // endpoint для телеграма
     app.use(wh.path, bot.webhookCallback(wh.path));
 
@@ -114,6 +120,7 @@ export async function startBot() {
       console.log(`✅ Healthcheck+Webhook server on :${port}`);
 
       try {
+        await bot.launch({ webhook: { domain: wh.baseUrl, hookPath: wh.path } });
         await bot.telegram.setWebhook(wh.url);
         console.log("✅ Telegram webhook set:", wh.url);
       } catch (e) {
@@ -129,7 +136,7 @@ export async function startBot() {
 
     try {
       // на всякий случай очищаем webhook, чтобы polling работал
-      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+      await bot.telegram.deleteWebhook({ drop_pending_updates: false });
     } catch (e) {
       console.warn("⚠️ deleteWebhook failed (can ignore):", e?.message || e);
     }
