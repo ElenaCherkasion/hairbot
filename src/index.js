@@ -62,9 +62,13 @@ export async function startBot() {
 
   const bot = new Telegraf(token);
 
-  // handlers
-  bot.start((ctx) => startHandler(ctx, { pool }));
-  bot.on("callback_query", (ctx) => callbackHandler(ctx, { pool }));
+  const app = express();
+  const runKeepAlive =
+    typeof startKeepAlive === "function" ? startKeepAlive : () => {};
+
+  // healthcheck (чтобы Render не убивал сервис)
+  app.get("/", (_req, res) => res.status(200).send("ok"));
+  app.get("/health", (_req, res) => res.status(200).send("ok"));
 
   const wh = getWebhookConfig();
   const port = Number(process.env.PORT || 3000);
@@ -93,11 +97,11 @@ export async function startBot() {
         console.error("❌ Failed to set webhook:", e?.message || e);
       }
     });
-    startKeepAlive();
+    runKeepAlive();
   } else {
     console.log("ℹ️ WEBHOOK_BASE_URL not set — using POLLING mode");
     app.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
-    startKeepAlive();
+    runKeepAlive();
 
     try {
       // на всякий случай очищаем webhook, чтобы polling работал
