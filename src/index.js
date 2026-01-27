@@ -1,5 +1,5 @@
 // src/index.js
-import dotenv from "dotenv";
+import dotenv from "dotenv"; // TODO: enforce webhook-only when WEBHOOK_BASE_URL is set (fix 409)
 dotenv.config();
 
 import express from "express";
