@@ -38,11 +38,11 @@ function createPoolIfConfigured() {
 function getWebhookConfig() {
   // ОБЯЗАТЕЛЬНО задай WEBHOOK_BASE_URL в Render:
   // например: https://hairstyle-bot.onrender.com
-  const base = (process.env.WEBHOOK_BASE_URL || "").trim().replace(/\/+$/, "");
+  const baseUrl = (process.env.WEBHOOK_BASE_URL || "").trim().replace(/\/+$/, "");
   const path = (process.env.WEBHOOK_PATH || "/telegraf").trim();
 
-  if (!base) return null;
-  return { base, path, url: `${base}${path}` };
+  if (!baseUrl) return null;
+  return { baseUrl, path, url: `${baseUrl}${path}` };
 }
 
 function startKeepAlive() {
@@ -93,11 +93,13 @@ export async function startBot() {
   startHandler(bot, restartState);
   callbackHandler(bot, pool);
 
-  const app = express();
+  const appServer = express();
+  const runKeepAlive =
+    typeof startKeepAlive === "function" ? startKeepAlive : () => {};
 
   // healthcheck (чтобы Render не убивал сервис)
-  app.get("/", (_req, res) => res.status(200).send("ok"));
-  app.get("/health", (_req, res) => res.status(200).send("ok"));
+  appServer.get("/", (_req, res) => res.status(200).send("ok"));
+  appServer.get("/health", (_req, res) => res.status(200).send("ok"));
 
   const port = Number(process.env.PORT || 3000);
   const wh = getWebhookConfig();
@@ -106,30 +108,53 @@ export async function startBot() {
     // WEBHOOK MODE (рекомендуется для Render)
     console.log("✅ Using WEBHOOK mode:", wh.url);
 
+    try {
+      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+    } catch (e) {
+      console.warn("⚠️ deleteWebhook failed (can ignore):", e?.message || e);
+    }
+
     // endpoint для телеграма
-    app.use(wh.path, bot.webhookCallback(wh.path));
+    appServer.use(wh.path, bot.webhookCallback(wh.path));
 
     // запускаем HTTP сервер
-    app.listen(port, async () => {
+    const server = appServer.listen(port, async () => {
       console.log(`✅ Healthcheck+Webhook server on :${port}`);
 
       try {
+        await bot.launch({ webhook: { domain: wh.baseUrl, hookPath: wh.path } });
         await bot.telegram.setWebhook(wh.url);
         console.log("✅ Telegram webhook set:", wh.url);
       } catch (e) {
         console.error("❌ Failed to set webhook:", e?.message || e);
       }
     });
-    startKeepAlive();
+    server.on("error", (error) => {
+      if (error?.code === "EADDRINUSE") {
+        console.error(`❌ Port ${port} is already in use. Check for another running process.`);
+      } else {
+        console.error("❌ Server listen error:", error?.message || error);
+      }
+      process.exit(1);
+    });
+    runKeepAlive();
   } else {
     // POLLING MODE (fallback, если не задан WEBHOOK_BASE_URL)
     console.log("ℹ️ WEBHOOK_BASE_URL not set — using POLLING mode");
-    app.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
-    startKeepAlive();
+    const server = appServer.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
+    server.on("error", (error) => {
+      if (error?.code === "EADDRINUSE") {
+        console.error(`❌ Port ${port} is already in use. Check for another running process.`);
+      } else {
+        console.error("❌ Server listen error:", error?.message || error);
+      }
+      process.exit(1);
+    });
+    runKeepAlive();
 
     try {
       // на всякий случай очищаем webhook, чтобы polling работал
-      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+      await bot.telegram.deleteWebhook({ drop_pending_updates: false });
     } catch (e) {
       console.warn("⚠️ deleteWebhook failed (can ignore):", e?.message || e);
     }
