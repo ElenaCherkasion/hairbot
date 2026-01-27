@@ -97,10 +97,26 @@ export async function startBot() {
         console.error("❌ Failed to set webhook:", e?.message || e);
       }
     });
+    server.on("error", (error) => {
+      if (error?.code === "EADDRINUSE") {
+        console.error(`❌ Port ${port} is already in use. Check for another running process.`);
+      } else {
+        console.error("❌ Server listen error:", error?.message || error);
+      }
+      process.exit(1);
+    });
     runKeepAlive();
   } else {
     console.log("ℹ️ WEBHOOK_BASE_URL not set — using POLLING mode");
-    appServer.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
+    const server = appServer.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
+    server.on("error", (error) => {
+      if (error?.code === "EADDRINUSE") {
+        console.error(`❌ Port ${port} is already in use. Check for another running process.`);
+      } else {
+        console.error("❌ Server listen error:", error?.message || error);
+      }
+      process.exit(1);
+    });
     runKeepAlive();
 
     try {
