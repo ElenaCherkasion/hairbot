@@ -36,10 +36,13 @@ function createPoolIfConfigured() {
 }
 
 function getWebhookConfig() {
-  const base = (process.env.WEBHOOK_BASE_URL || "").trim().replace(/\/+$/, "");
+  // ОБЯЗАТЕЛЬНО задай WEBHOOK_BASE_URL в Render:
+  // например: https://hairstyle-bot.onrender.com
+  const baseUrl = (process.env.WEBHOOK_BASE_URL || "").trim().replace(/\/+$/, "");
   const path = (process.env.WEBHOOK_PATH || "/telegraf").trim();
-  if (!base) return null;
-  return { base, path, url: `${base}${path}` };
+
+  if (!baseUrl) return null;
+  return { baseUrl, path, url: `${baseUrl}${path}` };
 }
 
 export async function startBot() {
@@ -69,15 +72,89 @@ export async function startBot() {
   if (wh) {
     console.log("✅ Using WEBHOOK mode:", wh.url);
 
-    // ✅ без double-path
-    app.use(wh.path, bot.webhookCallback());
+    try {
+      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+    } catch (e) {
+      console.warn("⚠️ deleteWebhook failed (can ignore):", e?.message || e);
+    }
 
-    await bot.telegram.setWebhook(wh.url);
-    console.log("✅ Telegram webhook set:", wh.url);
+    // endpoint для телеграма
+    app.use(wh.path, bot.webhookCallback(wh.path));
+
+    // запускаем HTTP сервер
+    app.listen(port, async () => {
+      console.log(`✅ Healthcheck+Webhook server on :${port}`);
+
+      try {
+        await bot.launch({ webhook: { domain: wh.baseUrl, hookPath: wh.path } });
+        await bot.telegram.setWebhook(wh.url);
+        console.log("✅ Telegram webhook set:", wh.url);
+      } catch (e) {
+        console.error("❌ Failed to set webhook:", e?.message || e);
+      }
+    });
+    startKeepAlive();
   } else {
     console.log("ℹ️ WEBHOOK_BASE_URL not set — using POLLING mode");
-    await bot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
-    await bot.launch();
+    app.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
+    startKeepAlive();
+
+    try {
+      // на всякий случай очищаем webhook, чтобы polling работал
+      await bot.telegram.deleteWebhook({ drop_pending_updates: false });
+    } catch (e) {
+      console.warn("⚠️ deleteWebhook failed (can ignore):", e?.message || e);
+    }
+
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const isConflictError = (err) => err?.response?.error_code === 409;
+    const isTimeoutError = (err) =>
+      err?.name === "TimeoutError" || String(err?.message || "").includes("Promise timed out");
+    const restartAfterWait = async (reason) => {
+      restartState.id += 1;
+      restartState.reason = reason;
+      try {
+        await bot.stop("RESTART");
+      } catch {}
+      console.log(`🔄 Restarting bot after wait (${reason})...`);
+      await bot.launch();
+      console.log("✅ Bot relaunched (polling)");
+    };
+
+    while (true) {
+      try {
+        await bot.launch();
+        console.log("✅ Bot launched (polling)");
+        break;
+      } catch (e) {
+        if (isConflictError(e)) {
+          const reason = "обнаружен конфликт polling — бот уже запущен в другом месте";
+          restartState.id += 1;
+          restartState.reason = reason;
+          console.error(
+            "❌ Polling conflict: another bot instance is running. Stop the other instance or use webhook mode."
+          );
+          try {
+            await bot.stop("CONFLICT");
+          } catch {}
+          break;
+        }
+        if (isTimeoutError(e)) {
+          const reason = "истекло время ожидания ответа Telegram";
+          console.warn("⚠️ Polling timed out. Retrying in 10s...");
+          await sleep(10000);
+          try {
+            await restartAfterWait(reason);
+            break;
+          } catch (restartError) {
+            console.warn("⚠️ Restart after timeout failed. Retrying in 10s...", restartError?.message);
+            await sleep(10000);
+            continue;
+          }
+        }
+        throw e;
+      }
+    }
   }
 
   app.listen(port, "0.0.0.0", () => {
