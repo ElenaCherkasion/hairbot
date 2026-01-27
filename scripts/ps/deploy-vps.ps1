@@ -1,5 +1,5 @@
 # scripts/ps/deploy-vps.ps1
-# Р—Р°РїСѓСЃРєР°С‚СЊ РќРђ WINDOWS: РґРµРїР»РѕР№ РЅР° VPS (git pull -> npm ci -> pm2 restart)
+# Запускать НА WINDOWS: деплой на VPS (git pull -> npm ci -> pm2 restart)
 
 $ErrorActionPreference = "Stop"
 
@@ -7,13 +7,7 @@ $Server = "root@185.130.212.232"
 $ProjectPath = "/root/bot"
 $Pm2Name = "hairbot"
 
-$RemoteCmd = @"
-set -e
-cd $ProjectPath
-git pull
-npm ci
-pm2 restart $Pm2Name
-pm2 save
-"@
+# Одна строка для bash, чтобы не было CRLF-ломания
+$RemoteCmd = "set -e; cd $ProjectPath; git pull; npm ci; pm2 restart $Pm2Name; pm2 save; echo ? Done"
 
-ssh $Server $RemoteCmd
+ssh $Server "bash -lc '$RemoteCmd'"
