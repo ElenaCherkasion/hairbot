@@ -16,10 +16,11 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            set -e
-            cd "${{ secrets.VPS_PATH }}"
-            git fetch --all
-            git reset --hard origin/main
-            npm ci --omit=dev
-            sudo /usr/bin/pm2 restart hairbot
-            sudo /usr/bin/pm2 save
+          set -e
+          cd "${{ secrets.VPS_PATH }}"
+          git fetch --all
+          git reset --hard origin/main
+          npm ci --omit=dev
+          sudo /usr/bin/pm2 restart hairbot
+          sudo /usr/bin/pm2 save
+          curl -fsS http://127.0.0.1:3000/health >/dev/null
