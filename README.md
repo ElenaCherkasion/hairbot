@@ -37,3 +37,4 @@ cp .env.example .env
 ### Экспорт логов
 - **TXT**: `ticket-{ticketNumber}.txt` — полный текстовый лог.
 - **PDF**: `ticket-{ticketNumber}.pdf` — PDF‑отчёт A4 с таймлайном сообщений.
+
