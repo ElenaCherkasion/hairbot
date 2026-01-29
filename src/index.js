@@ -39,7 +39,8 @@ function getWebhookConfig() {
   // ОБЯЗАТЕЛЬНО задай WEBHOOK_BASE_URL в Render:
   // например: https://hairstyle-bot.onrender.com
   const baseUrl = (process.env.WEBHOOK_BASE_URL || "").trim().replace(/\/+$/, "");
-  const path = (process.env.WEBHOOK_PATH || "/telegraf").trim();
+  const rawPath = (process.env.WEBHOOK_PATH || "/telegraf").trim() || "/telegraf";
+  const path = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
 
   if (!baseUrl) return null;
   return { baseUrl, path, url: `${baseUrl}${path}` };
