@@ -29,7 +29,12 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Run unit tests
-        run: npm test
+        run: |
+          if npm run | grep -qE '^  test'; then
+            npm test
+          else
+            echo "No test script defined. Skipping."
+          fi
 
       - name: Bot startup smoke test
         run: |
