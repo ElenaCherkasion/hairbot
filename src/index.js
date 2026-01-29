@@ -72,6 +72,7 @@ export async function startBot() {
 
   const wh = getWebhookConfig();
   const port = Number(process.env.PORT || 3000);
+let server;
 
   if (wh) {
     console.log("✅ Using WEBHOOK mode:", wh.url);
