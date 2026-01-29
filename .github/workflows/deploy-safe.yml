@@ -20,3 +20,4 @@ jobs:
       - name: 🚀 Execute Safe Deploy
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} "cd /var/www/hairbot && ./safe-deploy.sh"
+
