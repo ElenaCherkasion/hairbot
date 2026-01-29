@@ -89,13 +89,16 @@ export async function startBot() {
     }
   }
 
-  app.listen(port, "0.0.0.0", () => {
+  const server = app.listen(port, "0.0.0.0", () => {
     logger.info("Healthcheck+Webhook server listening", { port });
   });
 
   const shutdown = async () => {
     try {
       await bot.stop();
+    } catch {}
+    try {
+      server.close();
     } catch {}
     process.exit(0);
   };
