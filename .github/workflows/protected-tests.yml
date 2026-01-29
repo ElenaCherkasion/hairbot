@@ -11,7 +11,7 @@ env:
   NODE_ENV: "test"
 
 jobs:
-  проверка:
+  basic-checks:
     name: "🧪 Базовые проверки"
     runs-on: ubuntu-latest
     
