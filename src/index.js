@@ -1,4 +1,9 @@
+<<<<<<< HEAD
 ﻿import dotenv from "dotenv";
+=======
+﻿// src/index.js - ЧИСТАЯ ВЕРСИЯ
+import dotenv from "dotenv";
+>>>>>>> e3b3057038550a8037aedc96c64f21773aea4926
 dotenv.config();
 
 import express from "express";
@@ -39,7 +44,11 @@ function getWebhookConfig() {
   const path = (process.env.WEBHOOK_PATH || "/telegraf").trim();
 
   if (!baseUrl) return null;
+<<<<<<< HEAD
   return { baseUrl, path, url: baseUrl + path };
+=======
+  return { baseUrl, path, url: `${baseUrl}${path}` };
+>>>>>>> e3b3057038550a8037aedc96c64f21773aea4926
 }
 
 export async function startBot() {
@@ -67,7 +76,11 @@ export async function startBot() {
 
   const wh = getWebhookConfig();
   const port = Number(process.env.PORT || 3000);
+<<<<<<< HEAD
   let server;
+=======
+  let server; // ← ОДИН РАЗ И ТОЛЬКО ЗДЕСЬ!
+>>>>>>> e3b3057038550a8037aedc96c64f21773aea4926
 
   if (wh) {
     console.log("Using WEBHOOK mode:", wh.url);
@@ -75,17 +88,29 @@ export async function startBot() {
     try {
       await bot.telegram.deleteWebhook({ drop_pending_updates: true });
     } catch (e) {
+<<<<<<< HEAD
       console.warn("deleteWebhook failed (can ignore):", e?.message || e);
+=======
+      console.warn("⚠️ deleteWebhook failed (can ignore):", e?.message || e);
+>>>>>>> e3b3057038550a8037aedc96c64f21773aea4926
     }
 
     appServer.use(wh.path, bot.webhookCallback(wh.path));
 
+<<<<<<< HEAD
     server = appServer.listen(port, async () => {
       console.log("Healthcheck+Webhook server on :" + port);
+=======
+    // запускаем HTTP сервер
+5eec829696e9c11e35f25c117acdf5a0388f6afb
+    server = appServer.listen(port, async () => {
+      console.log(`✅ Healthcheck+Webhook server on :${port}`);
+>>>>>>> e3b3057038550a8037aedc96c64f21773aea4926
 
       try {
         await bot.launch({ webhook: { domain: wh.baseUrl, hookPath: wh.path } });
         await bot.telegram.setWebhook(wh.url);
+<<<<<<< HEAD
         console.log("Telegram webhook set:", wh.url);
       } catch (e) {
         console.error("Failed to set webhook:", e?.message || e);
@@ -95,12 +120,43 @@ export async function startBot() {
   } else {
     console.log("WEBHOOK_BASE_URL not set — using POLLING mode");
     server = appServer.listen(port, () => console.log("Healthcheck server on :" + port));
+=======
+        console.log("✅ Telegram webhook set:", wh.url);
+      } catch (e) {
+        console.error("❌ Failed to set webhook:", e?.message || e);
+      }
+    });
+    httpServer.on("error", (error) => {
+      if (error?.code === "EADDRINUSE") {
+        console.error(`вќЊ Port ${port} is already in use. Check for another running process.`);
+      } else {
+        console.error("вќЊ Server listen error:", error?.message || error);
+      }
+      process.exit(1);
+    });
+    runKeepAlive();
+  } else {
+    console.log("ℹ️ WEBHOOK_BASE_URL not set — using POLLING mode");
+    server = appServer.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
+    server.on("error", (error) => {
+      if (error?.code === "EADDRINUSE") {
+        console.error(`вќЊ Port ${port} is already in use. Check for another running process.`);
+      } else {
+        console.error("вќЊ Server listen error:", error?.message || error);
+      }
+      process.exit(1);
+    });
+>>>>>>> e3b3057038550a8037aedc96c64f21773aea4926
     runKeepAlive();
 
     try {
       await bot.telegram.deleteWebhook({ drop_pending_updates: false });
     } catch (e) {
+<<<<<<< HEAD
       console.warn("deleteWebhook failed (can ignore):", e?.message || e);
+=======
+      console.warn("⚠️ deleteWebhook failed (can ignore):", e?.message || e);
+>>>>>>> e3b3057038550a8037aedc96c64f21773aea4926
     }
 
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -113,14 +169,21 @@ export async function startBot() {
       try {
         await bot.stop("RESTART");
       } catch {}
+<<<<<<< HEAD
       console.log("Restarting bot after wait (" + reason + ")...");
       await bot.launch();
       console.log("Bot relaunched (polling)");
+=======
+      console.log(`🔄 Restarting bot after wait (${reason})...`);
+      await bot.launch();
+      console.log("✅ Bot relaunched (polling)");
+>>>>>>> e3b3057038550a8037aedc96c64f21773aea4926
     };
 
     while (true) {
       try {
         await bot.launch();
+<<<<<<< HEAD
         console.log("Bot launched (polling)");
         break;
       } catch (e) {
@@ -129,20 +192,41 @@ export async function startBot() {
           restartState.id += 1;
           restartState.reason = reason;
           console.error("Polling conflict: another bot instance is running");
+=======
+        console.log("✅ Bot launched (polling)");
+        break;
+      } catch (e) {
+        if (isConflictError(e)) {
+          const reason = "обнаружен конфликт polling — бот уже запущен в другом месте";
+          restartState.id += 1;
+          restartState.reason = reason;
+          console.error(
+            "❌ Polling conflict: another bot instance is running. Stop the other instance or use webhook mode."
+          );
+>>>>>>> e3b3057038550a8037aedc96c64f21773aea4926
           try {
             await bot.stop("CONFLICT");
           } catch {}
           break;
         }
         if (isTimeoutError(e)) {
+<<<<<<< HEAD
           const reason = "timeout";
           console.warn("Polling timed out. Retrying in 10s...");
+=======
+          const reason = "истекло время ожидания ответа Telegram";
+          console.warn("⚠️ Polling timed out. Retrying in 10s...");
+>>>>>>> e3b3057038550a8037aedc96c64f21773aea4926
           await sleep(10000);
           try {
             await restartAfterWait(reason);
             break;
           } catch (restartError) {
+<<<<<<< HEAD
             console.warn("Restart after timeout failed:", restartError?.message);
+=======
+            console.warn("⚠️ Restart after timeout failed. Retrying in 10s...", restartError?.message);
+>>>>>>> e3b3057038550a8037aedc96c64f21773aea4926
             await sleep(10000);
             continue;
           }
@@ -152,11 +236,20 @@ export async function startBot() {
     }
   }
 
+<<<<<<< HEAD
   server.on("error", (error) => {
     if (error?.code === "EADDRINUSE") {
       console.error("Port " + port + " is already in use");
     } else {
       console.error("Server listen error:", error?.message || error);
+=======
+  // Обработчик ошибок сервера - ПОСЛЕ if/else
+  server.on("error", (error) => {
+    if (error?.code === "EADDRINUSE") {
+      console.error(`❌ Port ${port} is already in use. Check for another running process.`);
+    } else {
+      console.error("❌ Server listen error:", error?.message || error);
+>>>>>>> e3b3057038550a8037aedc96c64f21773aea4926
     }
     process.exit(1);
   });
@@ -171,3 +264,4 @@ export async function startBot() {
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
 }
+
