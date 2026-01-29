@@ -9,5 +9,5 @@ jobs:
       with:
         node-version: "20"
     - run: npm ci
-    - run: node -e "console.log('Test passed')"
+    - run: echo "Checking bot files..."
     - run: timeout 2s node index.js 2>&1 || echo "Bot test completed"
