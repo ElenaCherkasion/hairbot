@@ -1,19 +1,20 @@
-﻿name: Bot Tests
+﻿name: Test Bot
 on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - name: Setup Node.js
+    - name: Setup Node.js 20
       uses: actions/setup-node@v4
       with:
         node-version: "20"
-    - name: Install dependencies
+    - name: Install
       run: |
-        echo "Installing dependencies..."
-        npm install
-    - name: Run bot test
+        ls -la
+        cat package.json || echo "No package.json"
+        npm install --no-package-lock
+    - name: Test
       run: |
-        echo "Testing bot startup..."
-        timeout 3s node index.js 2>&1 || echo "Test completed"
+        echo "Running bot..."
+        timeout 2s node index.js 2>&1 || echo "Done"
