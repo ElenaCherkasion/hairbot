@@ -2,12 +2,12 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import express from "express";
 import { Telegraf } from "telegraf";
 import pg from "pg";
 
 import startHandler from "./handlers/start.js";
 import callbackHandler from "./handlers/callback.js";
+import logger from "./utils/logger.js";
 
 const { Pool } = pg;
 
@@ -22,7 +22,7 @@ function getToken() {
 
 function createPoolIfConfigured() {
   if (!process.env.DATABASE_URL) {
-    console.log("ℹ️ DATABASE_URL not set — DB disabled");
+    logger.info("DATABASE_URL not set — DB disabled");
     return null;
   }
 
@@ -31,7 +31,7 @@ function createPoolIfConfigured() {
     ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : false,
   });
 
-  console.log("✅ DB pool created");
+  logger.info("DB pool created");
   return pool;
 }
 
@@ -45,9 +45,20 @@ function getWebhookConfig() {
 export async function startBot() {
   const token = getToken();
   if (!token) {
-    console.error("❌ TELEGRAM_TOKEN/TELEGRAM_BOT_TOKEN/BOT_TOKEN is missing");
+    logger.error("TELEGRAM_TOKEN/TELEGRAM_BOT_TOKEN/BOT_TOKEN is missing");
     process.exit(1);
   }
+
+  const { default: express } = await import("express");
+
+  const isTestEnv = process.env.NODE_ENV === "test" || token === "test_token_123";
+
+  logger.info("Starting bot", {
+    nodeEnv: process.env.NODE_ENV || "development",
+    webhookBase: process.env.WEBHOOK_BASE_URL || null,
+    port: Number(process.env.PORT || 3000),
+    isTestEnv,
+  });
 
   const app = express();
   app.use(express.json({ limit: "2mb" }));
@@ -60,28 +71,36 @@ export async function startBot() {
   const bot = new Telegraf(token);
 
   // handlers
-  bot.start((ctx) => startHandler(ctx, { pool }));
+  startHandler(bot);
   bot.on("callback_query", (ctx) => callbackHandler(ctx, { pool }));
 
   const wh = getWebhookConfig();
   const port = Number(process.env.PORT || 3000);
 
   if (wh) {
-    console.log("✅ Using WEBHOOK mode:", wh.url);
+    logger.info("Using WEBHOOK mode", { url: wh.url });
 
     // ✅ без double-path
     app.use(wh.path, bot.webhookCallback());
 
-    await bot.telegram.setWebhook(wh.url);
-    console.log("✅ Telegram webhook set:", wh.url);
+    if (!isTestEnv) {
+      await bot.telegram.setWebhook(wh.url);
+      logger.info("Telegram webhook set", { url: wh.url });
+    } else {
+      logger.warn("NODE_ENV=test — skipping Telegram webhook setup");
+    }
   } else {
-    console.log("ℹ️ WEBHOOK_BASE_URL not set — using POLLING mode");
-    await bot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
-    await bot.launch();
+    logger.info("WEBHOOK_BASE_URL not set — using POLLING mode");
+    if (!isTestEnv) {
+      await bot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
+      await bot.launch();
+    } else {
+      logger.warn("NODE_ENV=test — skipping bot.launch()");
+    }
   }
 
   app.listen(port, "0.0.0.0", () => {
-    console.log(`✅ Healthcheck+Webhook server on :${port}`);
+    logger.info("Healthcheck+Webhook server listening", { port });
   });
 
   const shutdown = async () => {
