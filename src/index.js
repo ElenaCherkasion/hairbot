@@ -71,6 +71,7 @@ export async function startBot() {
 
   const wh = getWebhookConfig();
   const port = Number(process.env.PORT || 3000);
+  let server;
 
   if (wh) {
     console.log("✅ Using WEBHOOK mode:", wh.url);
@@ -85,7 +86,7 @@ export async function startBot() {
     appServer.use(wh.path, bot.webhookCallback(wh.path));
 
     // запускаем HTTP сервер
-    const server = appServer.listen(port, async () => {
+    server = appServer.listen(port, async () => {
       console.log(`✅ Healthcheck+Webhook server on :${port}`);
 
       try {
@@ -107,7 +108,7 @@ export async function startBot() {
     runKeepAlive();
   } else {
     console.log("ℹ️ WEBHOOK_BASE_URL not set — using POLLING mode");
-    const server = appServer.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
+    server = appServer.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
     server.on("error", (error) => {
       if (error?.code === "EADDRINUSE") {
         console.error(`❌ Port ${port} is already in use. Check for another running process.`);
