@@ -33,7 +33,7 @@
     "deploy": "npm start",
     "prod:start": "NODE_ENV=production node index.js",
     "prestart": "echo '🚀 Запуск HairBot...'",
-    "postinstall": "echo '✅ Зависимости установлены'"
+    "postinstall": "node scripts/cleanup-openai-orig.js && echo '✅ Зависимости установлены'"
   },
   "engines": {
     "node": "22.x",

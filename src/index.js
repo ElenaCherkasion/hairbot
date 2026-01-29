@@ -81,6 +81,8 @@ export async function startBot() {
 
     appServer.use(wh.path, bot.webhookCallback(wh.path));
 
+    // запускаем HTTP сервер
+5eec829696e9c11e35f25c117acdf5a0388f6afb
     server = appServer.listen(port, async () => {
       console.log(`✅ Healthcheck+Webhook server on :${port}`);
 
@@ -92,10 +94,26 @@ export async function startBot() {
         console.error("❌ Failed to set webhook:", e?.message || e);
       }
     });
+    httpServer.on("error", (error) => {
+      if (error?.code === "EADDRINUSE") {
+        console.error(`вќЊ Port ${port} is already in use. Check for another running process.`);
+      } else {
+        console.error("вќЊ Server listen error:", error?.message || error);
+      }
+      process.exit(1);
+    });
     runKeepAlive();
   } else {
     console.log("ℹ️ WEBHOOK_BASE_URL not set — using POLLING mode");
     server = appServer.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
+    server.on("error", (error) => {
+      if (error?.code === "EADDRINUSE") {
+        console.error(`вќЊ Port ${port} is already in use. Check for another running process.`);
+      } else {
+        console.error("вќЊ Server listen error:", error?.message || error);
+      }
+      process.exit(1);
+    });
     runKeepAlive();
 
     try {
@@ -175,3 +193,4 @@ export async function startBot() {
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
 }
+
