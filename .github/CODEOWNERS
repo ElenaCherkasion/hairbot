@@ -1,0 +1,7 @@
+﻿# Защищаем workflow файлы
+.github/workflows/protected-tests.yml @hairbot-org/maintainers
+
+# Защищаем основные файлы бота
+/index.js @hairbot-org/maintainers
+/src/index.js @hairbot-org/maintainers
+/package.json @hairbot-org/maintainers

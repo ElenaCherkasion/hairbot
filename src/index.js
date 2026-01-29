@@ -1,5 +1,4 @@
-// src/index.js
-import dotenv from "dotenv";
+﻿import dotenv from "dotenv";
 dotenv.config();
 
 import { Telegraf } from "telegraf";
@@ -38,21 +37,13 @@ async function createPoolIfConfigured() {
     return null;
   }
 
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : false,
-  });
+  const isTestEnv = process.env.NODE_ENV === "test" || token === "test_token_123";
 
   logger.info("DB pool created");
   return pool;
 }
 
-function getWebhookConfig() {
-  const base = (process.env.WEBHOOK_BASE_URL || "").trim().replace(/\/+$/, "");
-  const path = (process.env.WEBHOOK_PATH || "/telegraf").trim();
-  if (!base) return null;
-  return { base, path, url: `${base}${path}` };
-}
+  const isTestEnv = process.env.NODE_ENV === "test" || token === "test_token_123";
 
 export async function startBot() {
   const token = getToken();
