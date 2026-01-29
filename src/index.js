@@ -1,52 +1,13 @@
-// src/index.js
-import dotenv from "dotenv";
+﻿import dotenv from "dotenv";
 dotenv.config();
 
-import express from "express";
 import { Telegraf } from "telegraf";
-import pg from "pg";
-
-import startHandler from "./handlers/start.js";
-import callbackHandler from "./handlers/callback.js";
-
-const { Pool } = pg;
-
-function getToken() {
-  return (
-    process.env.TELEGRAM_BOT_TOKEN ||
-    process.env.TELEGRAM_TOKEN ||
-    process.env.BOT_TOKEN ||
-    ""
-  ).trim();
-}
-
-function createPoolIfConfigured() {
-  if (!process.env.DATABASE_URL) {
-    console.log("ℹ️ DATABASE_URL not set — DB disabled");
-    return null;
-  }
-
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : false,
-  });
-
-  console.log("✅ DB pool created");
-  return pool;
-}
-
-function getWebhookConfig() {
-  const base = (process.env.WEBHOOK_BASE_URL || "").trim().replace(/\/+$/, "");
-  const path = (process.env.WEBHOOK_PATH || "/telegraf").trim();
-  if (!base) return null;
-  return { base, path, url: `${base}${path}` };
-}
 
 export async function startBot() {
-  const token = getToken();
+  const token = process.env.TELEGRAM_TOKEN || "";
   if (!token) {
-    console.error("❌ TELEGRAM_TOKEN/TELEGRAM_BOT_TOKEN/BOT_TOKEN is missing");
-    process.exit(1);
+    console.error("No token");
+    return null;
   }
 
   const isTestEnv = process.env.NODE_ENV === "test" || token === "test_token_123";

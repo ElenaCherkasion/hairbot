@@ -1,5 +1,4 @@
-// index.js
-import { startBot } from "./src/index.js";
+﻿import { startBot } from "./src/index.js";
 
 const entrypoint = process.argv[1] || "";
 const isDirectRun = entrypoint.endsWith("index.js");
