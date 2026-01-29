@@ -1,8 +1,12 @@
 // index.js
+import path from "path";
+import { fileURLToPath } from "url";
+
 import { startBot } from "./src/index.js";
 
-const entrypoint = process.argv[1] || "";
-const isDirectRun = entrypoint.endsWith("index.js");
+const entrypoint = process.argv[1];
+const isDirectRun =
+  entrypoint && path.resolve(entrypoint) === fileURLToPath(import.meta.url);
 
 if (isDirectRun) {
   startBot().catch((e) => {
