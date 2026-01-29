@@ -38,3 +38,4 @@ cp .env.example .env
 - **TXT**: `ticket-{ticketNumber}.txt` — полный текстовый лог.
 - **PDF**: `ticket-{ticketNumber}.pdf` — PDF‑отчёт A4 с таймлайном сообщений.
 
+# Тест системы\n\nЭто тестовое обновление от Codex
