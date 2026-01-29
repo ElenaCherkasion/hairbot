@@ -7,7 +7,6 @@ import startHandler from "./handlers/start.js";
 import callbackHandler from "./handlers/callback.js";
 import logger from "./utils/logger.js";
 
-const { Pool } = pg;
 
 function getToken() {
   return (
@@ -18,9 +17,23 @@ function getToken() {
   ).trim();
 }
 
-function createPoolIfConfigured() {
+async function createPoolIfConfigured() {
   if (!process.env.DATABASE_URL) {
     logger.info("DATABASE_URL not set — DB disabled");
+    return null;
+  }
+
+  let Pool;
+  try {
+    const pgModule = await import("pg");
+    Pool = pgModule.Pool || pgModule.default?.Pool;
+  } catch (error) {
+    logger.error("Failed to load pg; DB disabled", { error });
+    return null;
+  }
+
+  if (!Pool) {
+    logger.error("pg module loaded but Pool is missing; DB disabled");
     return null;
   }
 
@@ -56,7 +69,7 @@ export async function startBot() {
   // healthcheck
   app.get("/health", (_req, res) => res.status(200).send("ok"));
 
-  const pool = createPoolIfConfigured();
+  const pool = await createPoolIfConfigured();
 
   const bot = new Telegraf(token);
 
@@ -66,6 +79,7 @@ export async function startBot() {
 
   const wh = getWebhookConfig();
   const port = Number(process.env.PORT || 3000);
+  let server = null;
 
   if (wh) {
     logger.info("Using WEBHOOK mode", { url: wh.url });
@@ -89,7 +103,7 @@ export async function startBot() {
     }
   }
 
-  const server = app.listen(port, "0.0.0.0", () => {
+  server = app.listen(port, "0.0.0.0", () => {
     logger.info("Healthcheck+Webhook server listening", { port });
   });
 
@@ -97,9 +111,11 @@ export async function startBot() {
     try {
       await bot.stop();
     } catch {}
-    try {
-      server.close();
-    } catch {}
+    if (server) {
+      try {
+        server.close();
+      } catch {}
+    }
     process.exit(0);
   };
 
