@@ -28,7 +28,10 @@ function createPoolIfConfigured() {
 
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === "true" ? { rejectUnauthorized: false } : false,
+    ssl:
+      process.env.DATABASE_SSL === "true"
+        ? { rejectUnauthorized: false }
+        : false,
   });
 
   console.log("✅ DB pool created");
@@ -36,7 +39,9 @@ function createPoolIfConfigured() {
 }
 
 function getWebhookConfig() {
-  const base = (process.env.WEBHOOK_BASE_URL || "").trim().replace(/\/+$/, "");
+  const base = (process.env.WEBHOOK_BASE_URL || "")
+    .trim()
+    .replace(/\/+$/, "");
   const path = (process.env.WEBHOOK_PATH || "/telegraf").trim();
   if (!base) return null;
   return { base, path, url: `${base}${path}` };
@@ -69,7 +74,7 @@ export async function startBot() {
   if (wh) {
     console.log("✅ Using WEBHOOK mode:", wh.url);
 
-    // ✅ без double-path
+    // webhook endpoint
     app.use(wh.path, bot.webhookCallback());
 
     await bot.telegram.setWebhook(wh.url);
@@ -80,14 +85,30 @@ export async function startBot() {
     await bot.launch();
   }
 
-  app.listen(port, "0.0.0.0", () => {
-    console.log(`✅ Healthcheck+Webhook server on :${port}`);
+  // HTTP server (one time)
+  const httpServer = app.listen(port, "0.0.0.0", () => {
+    console.log(`✅ Healthcheck server on :${port}`);
+    if (wh) console.log(`✅ Webhook endpoint: ${wh.path}`);
+  });
+
+  httpServer.on("error", (error) => {
+    console.error("❌ Server listen error:", error?.message || error);
+    process.exit(1);
   });
 
   const shutdown = async () => {
     try {
+      httpServer.close();
+    } catch {}
+
+    try {
       await bot.stop();
     } catch {}
+
+    try {
+      await pool?.end?.();
+    } catch {}
+
     process.exit(0);
   };
 
