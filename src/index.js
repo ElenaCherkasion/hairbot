@@ -39,7 +39,8 @@ function getWebhookConfig() {
   // ОБЯЗАТЕЛЬНО задай WEBHOOK_BASE_URL в Render:
   // например: https://hairstyle-bot.onrender.com
   const baseUrl = (process.env.WEBHOOK_BASE_URL || "").trim().replace(/\/+$/, "");
-  const path = (process.env.WEBHOOK_PATH || "/telegraf").trim();
+  const rawPath = (process.env.WEBHOOK_PATH || "/telegraf").trim() || "/telegraf";
+  const path = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
 
   if (!baseUrl) return null;
   return { baseUrl, path, url: `${baseUrl}${path}` };
@@ -52,17 +53,16 @@ export async function startBot() {
     process.exit(1);
   }
 
-  const app = express();
-  app.use(express.json({ limit: "2mb" }));
-
-  // healthcheck
-  app.get("/health", (_req, res) => res.status(200).send("ok"));
-
   const pool = createPoolIfConfigured();
 
   const bot = new Telegraf(token);
+  const restartState = { id: 0, reason: "" };
+
+  startHandler(bot, restartState);
+  callbackHandler(bot, pool);
 
   const appServer = express();
+  appServer.use(express.json({ limit: "2mb" }));
   const runKeepAlive =
     typeof startKeepAlive === "function" ? startKeepAlive : () => {};
 
@@ -72,7 +72,11 @@ export async function startBot() {
 
   const wh = getWebhookConfig();
   const port = Number(process.env.PORT || 3000);
+<<<<<<< HEAD
 let server;
+=======
+  let server;
+>>>>>>> faa5e6cdbfb4da63673dd3eeb6ed5dc01f2e275f
 
   if (wh) {
     console.log("✅ Using WEBHOOK mode:", wh.url);
@@ -87,7 +91,7 @@ let server;
     appServer.use(wh.path, bot.webhookCallback(wh.path));
 
     // запускаем HTTP сервер
-    appServer.listen(port, async () => {
+    server = appServer.listen(port, async () => {
       console.log(`✅ Healthcheck+Webhook server on :${port}`);
 
       try {
@@ -109,7 +113,7 @@ let server;
     runKeepAlive();
   } else {
     console.log("ℹ️ WEBHOOK_BASE_URL not set — using POLLING mode");
-    const server = appServer.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
+    server = appServer.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
     server.on("error", (error) => {
       if (error?.code === "EADDRINUSE") {
         console.error(`❌ Port ${port} is already in use. Check for another running process.`);
@@ -177,10 +181,6 @@ let server;
       }
     }
   }
-
-  app.listen(port, "0.0.0.0", () => {
-    console.log(`✅ Healthcheck+Webhook server on :${port}`);
-  });
 
   const shutdown = async () => {
     try {
