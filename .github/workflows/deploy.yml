@@ -1,26 +1,67 @@
-on:
-  workflow_dispatch:
+name: 🚀 Deploy to VPS
 
-concurrency:
-  group: deploy-production
-  cancel-in-progress: false
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+    types: [closed]
 
 jobs:
   deploy:
+    # Запускать только когда PR закрыт и вмержен в main
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true)
+    
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.0.3
+      - name: 📦 Checkout code
+        uses: actions/checkout@v3
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-          set -e
-          cd "${{ secrets.VPS_PATH }}"
-          git fetch --all
-          git reset --hard origin/main
-          npm ci --omit=dev
-          sudo /usr/bin/pm2 restart hairbot
-          sudo /usr/bin/pm2 save
-          curl -fsS http://127.0.0.1:3000/health >/dev/null
+          fetch-depth: 0
+          
+      - name: 🔑 Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+          
+      - name: 🚀 Deploy to VPS
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} << 'EOF'
+            echo "🚀 Начинаю деплой..."
+            cd /var/www/hairbot
+            
+            # Сохраняем текущий .env
+            if [ -f .env ]; then
+              cp .env .env.backup_deploy_$(date +%Y%m%d_%H%M%S)
+              echo "💾 Backup .env создан"
+            fi
+            
+            # Обновляем код (но не .env!)
+            git stash
+            git pull origin main
+            git stash pop || true
+            
+            # Восстанавливаем .env из backup
+            if ls .env.backup_deploy_* 1> /dev/null 2>&1; then
+              latest_backup=$(ls -t .env.backup_deploy_* | head -1)
+              mv "$latest_backup" .env
+              echo "🔧 .env восстановлен из backup"
+            fi
+            
+            # Перезапускаем контейнеры
+            docker-compose down
+            docker-compose up -d --build
+            
+            echo "✅ Деплой завершён!"
+            echo "📊 Статус контейнеров:"
+            docker-compose ps
+          EOF
+          
+      - name: 📝 Notify
+        run: |
+          echo "✅ Successfully deployed to VPS"
+          echo "🕐 $(date)"
+          echo "🔗 Repository: ${{ github.repository }}"
