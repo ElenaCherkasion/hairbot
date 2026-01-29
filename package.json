@@ -1,7 +1,7 @@
-{
+﻿{
   "name": "hairbot",
   "version": "1.0.0",
-  "description": "Telegram бот для анализа формы лица и подбора стрижек с использованием OpenAI",
+  "description": "Telegram Р±РѕС‚ РґР»СЏ Р°РЅР°Р»РёР·Р° С„РѕСЂРјС‹ Р»РёС†Р° Рё РїРѕРґР±РѕСЂР° СЃС‚СЂРёР¶РµРє СЃ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёРµРј OpenAI",
   "main": "index.js",
   "type": "module",
   "private": false,
@@ -32,8 +32,8 @@
     "clean:logs": "rm -f logs/*.log || true",
     "deploy": "npm start",
     "prod:start": "NODE_ENV=production node index.js",
-    "prestart": "echo '🚀 Запуск HairBot...'",
-    "postinstall": "node scripts/cleanup-openai-orig.js && echo '✅ Зависимости установлены'"
+    "prestart": "echo 'рџљЂ Р—Р°РїСѓСЃРє HairBot...'",
+    "postinstall": "node scripts/cleanup-openai-orig.js && echo 'вњ… Р—Р°РІРёСЃРёРјРѕСЃС‚Рё СѓСЃС‚Р°РЅРѕРІР»РµРЅС‹'"
   },
   "engines": {
     "node": "22.x",
@@ -103,3 +103,5 @@
     "arm64"
   ]
 }
+
+// Test update for workflow trigger - 01/29/2026 20:59:52
