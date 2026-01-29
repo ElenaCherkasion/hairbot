@@ -16,6 +16,10 @@ export async function startBot() {
 
   const isTestEnv = process.env.NODE_ENV === "test" || token === "test_token_123";
 
+  const { default: express } = await import("express");
+
+  const isTestEnv = process.env.NODE_ENV === "test" || token === "test_token_123";
+
   const app = express();
   app.use(express.json({ limit: "2mb" }));
 
