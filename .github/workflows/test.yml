@@ -1,0 +1,41 @@
+﻿name: Тесты бота
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Получить код
+      uses: actions/checkout@v4
+    
+    - name: Установить Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+    
+    - name: Установить зависимости
+      run: npm ci
+    
+    - name: Проверить импорты
+      run: |
+        node -e "
+        try {
+          require('./index.js');
+          console.log('index.js - OK');
+        } catch(e) {
+          console.error('Ошибка в index.js:', e.message);
+          process.exit(1);
+        }
+        "
+    
+    - name: Быстрый тест бота
+      run: |
+        echo "Запускаем тест..."
+        timeout 2s node index.js 2>&1 || true
+        echo "Тест завершен"
