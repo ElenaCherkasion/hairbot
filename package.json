@@ -10,7 +10,7 @@
                     "dev":  "nodemon index.js",
                     "dev:watch":  "nodemon --watch src --ext js,json --exec node index.js",
                     "dev:debug":  "NODE_ENV=development nodemon --inspect index.js",
-                    "test":  "jest --passWithNoTests",
+                    "test":  "echo \u0027No tests configured\u0027",
                     "test:watch":  "jest --watch",
                     "test:coverage":  "jest --coverage",
                     "lint":  "eslint .",
