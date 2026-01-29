@@ -1,0 +1,188 @@
+﻿name: "🛡️ Защищенные тесты"
+
+# Только для main ветки и pull requests
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Явно отключаем запуск от Codex
+permissions:
+  contents: read
+  checks: write
+
+env:
+  # Используем тестовый токен
+  TELEGRAM_TOKEN: "test_token_1234567890"
+  NODE_ENV: "test"
+  # Защита от переопределения
+  CI: "true"
+  PROTECTED_TESTS: "true"
+
+jobs:
+  # Job 1: Проверка что не Codex вносит изменения
+  validate-changes:
+    name: "🔍 Проверка изменений"
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    
+    outputs:
+      is_valid: ${{ steps.check.outputs.is_valid }}
+    
+    steps:
+    - name: "📥 Получить код"
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: "🔎 Проверить автора изменений"
+      id: check
+      run: |
+        # Проверяем что последний коммит не от бота Codex
+        LAST_COMMITTER=$(git log -1 --pretty=format:"%an")
+        echo "Последний коммит от: $LAST_COMMITTER"
+        
+        # Список "запрещенных" авторов (боты Codex)
+        BAD_AUTHORS="codex|GPT|AI|bot"
+        if echo "$LAST_COMMITTER" | grep -E -i "$BAD_AUTHORS"; then
+          echo "is_valid=false" >> $GITHUB_OUTPUT
+          echo "⚠️ Обнаружен коммит от бота/Codex"
+        else
+          echo "is_valid=true" >> $GITHUB_OUTPUT
+          echo "✅ Коммит от человека"
+        fi
+  
+  # Job 2: Основные тесты (запускаются только если проверка пройдена)
+  run-tests:
+    name: "🧪 Запуск тестов"
+    runs-on: ubuntu-latest
+    needs: validate-changes
+    if: needs.validate-changes.outputs.is_valid == 'true'
+    
+    steps:
+    - name: "📥 Получить код"
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    
+    - name: "⚙️ Установить Node.js"
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+        cache: "npm"
+    
+    - name: "📦 Установить зависимости"
+      run: |
+        # Проверяем package.json на валидность
+        node -e "JSON.parse(require('fs').readFileSync('package.json', 'utf8'))"
+        echo "✅ package.json валиден"
+        npm ci
+    
+    - name: "🧪 Проверка основных файлов"
+      run: |
+        # Проверяем что основные файлы существуют и имеют правильную структуру
+        REQUIRED_FILES=("index.js" "src/index.js" "package.json")
+        for file in "${REQUIRED_FILES[@]}"; do
+          if [ -f "$file" ]; then
+            echo "✅ $file существует"
+          else
+            echo "❌ $file отсутствует"
+            exit 1
+          fi
+        done
+        
+        # Проверяем что нет конфликтных маркеров git
+        if grep -r "<<<<<<<" . --include="*.js" --include="*.json"; then
+          echo "❌ Обнаружены конфликтные маркеры git"
+          exit 1
+        fi
+        echo "✅ Конфликтных маркеров нет"
+    
+    - name: "🤖 Тест импортов бота"
+      run: |
+        echo "Проверяем импорты..."
+        node -e "
+        const files = [
+          {name: 'index.js', path: './index.js'},
+          {name: 'src/index.js', path: './src/index.js'}
+        ];
+        
+        async function checkImports() {
+          for (const file of files) {
+            try {
+              await import(file.path);
+              console.log('✅ ' + file.name + ' - OK');
+            } catch (e) {
+              // Игнорируем ошибки Telegram API с тестовым токеном
+              if (e.message.includes('404') || e.message.includes('Not Found')) {
+                console.log('⚠️ ' + file.name + ' - Telegram error (expected with test token)');
+              } else {
+                console.error('❌ ' + file.name + ' - ' + e.message);
+                process.exit(1);
+              }
+            }
+          }
+        }
+        
+        checkImports().catch(e => {
+          console.error('❌ Непредвиденная ошибка:', e.message);
+          process.exit(1);
+        });
+        "
+    
+    - name: "🚀 Быстрый тест запуска"
+      run: |
+        echo "Тестируем запуск бота (3 секунды)..."
+        LOG_FILE="/tmp/bot_test.log"
+        
+        # Запускаем бота в фоне
+        timeout 3s node index.js > "$LOG_FILE" 2>&1 &
+        PID=$!
+        
+        # Ждем немного
+        sleep 1
+        
+        # Проверяем что процесс запустился
+        if kill -0 $PID 2>/dev/null; then
+          echo "✅ Бот запустился"
+          
+          # Ищем критические ошибки (кроме Telegram 404)
+          if grep -q -E "ReferenceError|TypeError|SyntaxError|Error:" "$LOG_FILE" | grep -v "404" | grep -v "Not Found"; then
+            echo "❌ Обнаружены критические ошибки:"
+            grep -E "ReferenceError|TypeError|SyntaxError|Error:" "$LOG_FILE" | grep -v "404" | grep -v "Not Found"
+            kill $PID 2>/dev/null || true
+            exit 1
+          fi
+          
+          # Останавливаем процесс
+          kill $PID 2>/dev/null || true
+          echo "✅ Тест пройден успешно"
+        else
+          echo "❌ Бот не запустился"
+          echo "=== Лог ==="
+          cat "$LOG_FILE"
+          exit 1
+        fi
+  
+  # Job 3: Финальная проверка (всегда запускается)
+  final-check:
+    name: "✅ Финальная проверка"
+    runs-on: ubuntu-latest
+    needs: run-tests
+    if: always()
+    
+    steps:
+    - name: "📊 Отчет"
+      run: |
+        if [[ "${{ needs.run-tests.result }}" == "success" ]]; then
+          echo "🎉 Все тесты пройдены успешно!"
+          echo "## ✅ Результаты тестов" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Проверка изменений пройдена" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Основные файлы в порядке" >> $GITHUB_STEP_SUMMARY  
+          echo "- ✅ Импорты работают" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Бот запускается" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "## ❌ Тесты не пройдены" >> $GITHUB_STEP_SUMMARY
+          echo "Требуется ручное вмешательство разработчика." >> $GITHUB_STEP_SUMMARY
+        fi
