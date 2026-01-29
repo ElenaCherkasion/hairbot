@@ -88,7 +88,7 @@ let server;
     appServer.use(wh.path, bot.webhookCallback(wh.path));
 
     // запускаем HTTP сервер
-    httpServer = appServer.listen(port, async () => {
+    server = appServer.listen(port, async () => {
       console.log(`✅ Healthcheck+Webhook server on :${port}`);
 
       try {
@@ -110,8 +110,8 @@ let server;
     runKeepAlive();
   } else {
     console.log("ℹ️ WEBHOOK_BASE_URL not set — using POLLING mode");
-    httpServer = appServer.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
-    httpServer.on("error", (error) => {
+    server = appServer.listen(port, () => console.log(`✅ Healthcheck server on :${port}`));
+    server.on("error", (error) => {
       if (error?.code === "EADDRINUSE") {
         console.error(`вќЊ Port ${port} is already in use. Check for another running process.`);
       } else {
