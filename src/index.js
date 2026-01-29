@@ -52,15 +52,13 @@ export async function startBot() {
     process.exit(1);
   }
 
-  const app = express();
-  app.use(express.json({ limit: "2mb" }));
-
-  // healthcheck
-  app.get("/health", (_req, res) => res.status(200).send("ok"));
-
   const pool = createPoolIfConfigured();
 
   const bot = new Telegraf(token);
+  const restartState = { id: 0, reason: "" };
+
+  startHandler(bot, restartState);
+  callbackHandler(bot, pool);
 
   const appServer = express();
   const runKeepAlive =
@@ -86,7 +84,7 @@ export async function startBot() {
     appServer.use(wh.path, bot.webhookCallback(wh.path));
 
     // запускаем HTTP сервер
-    appServer.listen(port, async () => {
+    const server = appServer.listen(port, async () => {
       console.log(`✅ Healthcheck+Webhook server on :${port}`);
 
       try {
@@ -176,10 +174,6 @@ export async function startBot() {
       }
     }
   }
-
-  app.listen(port, "0.0.0.0", () => {
-    console.log(`✅ Healthcheck+Webhook server on :${port}`);
-  });
 
   const shutdown = async () => {
     try {
