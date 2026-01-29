@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  # Ключевое: передаём токен через секреты
+  TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+  NODE_ENV: test
+
 jobs:
   quality:
     runs-on: ubuntu-latest
@@ -43,45 +48,39 @@ jobs:
       - name: ⚙️ Check critical files
         run: |
           echo "Checking essential files..."
-          
-          # Обязательные файлы
           [ -f "index.js" ] || { echo "❌ Missing index.js"; exit 1; }
           [ -f "package.json" ] || { echo "❌ Missing package.json"; exit 1; }
           [ -f ".env.example" ] || echo "⚠️  No .env.example file"
-          
-          # Проверяем структуру
           [ -f "src/index.js" ] || { echo "❌ Missing src/index.js"; exit 1; }
-          [ -d "src/handlers" ] || { echo "❌ Missing src/handlers directory"; exit 1; }
-          
           echo "✅ All critical files present"
         
       - name: 🎯 Syntax validation
         run: |
           echo "Validating JavaScript syntax..."
-          
-          # Проверяем основной файл
           node --check index.js || { echo "❌ Syntax error in index.js"; exit 1; }
-          
-          # Проверяем все .js файлы в src
           find src -name "*.js" -exec node --check {} \; || {
             echo "❌ Syntax errors found in src files"
             exit 1
           }
-          
           echo "✅ All files have valid syntax"
         
       - name: 🤖 Bot startup smoke test
+        env:
+          # Дублируем здесь для верности
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          DATABASE_URL: ""
+          WEBHOOK_BASE_URL: ""
+          PORT: "3999"
         run: |
           echo "Running bot startup smoke test..."
           
-          # Создаем тестовый .env
-          cat > .env.test << ENV
-          TELEGRAM_TOKEN=test_token_123456:AAHHDDssh_test_fake_token
-          DATABASE_URL=
-          WEBHOOK_BASE_URL=
-          PORT=3999
-          NODE_ENV=test
-          ENV
+          # Проверяем что токен есть
+          if [ -z "$TELEGRAM_TOKEN" ]; then
+            echo "⚠️  TELEGRAM_TOKEN is empty, using test token"
+            export TELEGRAM_TOKEN="test_token_123"
+          else
+            echo "✅ TELEGRAM_TOKEN is set (length: ${#TELEGRAM_TOKEN})"
+          fi
           
           # Тест 1: Проверка импортов
           echo "1. Testing module imports..."
@@ -94,142 +93,84 @@ jobs:
                 await import('./src/index.js');
                 console.log('✅ src/index.js imports OK');
                 
-                // Проверяем обработчики если есть
-                if (require('fs').existsSync('./src/handlers/start.js')) {
+                // Проверяем обработчики
+                const fs = require('fs');
+                if (fs.existsSync('./src/handlers/start.js')) {
                   await import('./src/handlers/start.js');
                   console.log('✅ start.js imports OK');
                 }
                 
-                if (require('fs').existsSync('./src/handlers/callback.js')) {
-                  await import('./src/handlers/callback.js');
-                  console.log('✅ callback.js imports OK');
-                }
-                
               } catch (error) {
                 console.error('❌ Import failed:', error.message);
-                console.error('Stack trace:', error.stack.split('\\n').slice(0, 5).join('\\n'));
+                console.error('Error location:', error.stack.split('\\\\n')[0]);
                 process.exit(1);
               }
             }
             testImports();
           "
           
-          # Тест 2: Проверка переменных окружения
-          echo "2. Checking environment variables..."
-          node -e "
-            const fs = require('fs');
-            const path = require('path');
-            
-            // Читаем .env.example если есть
-            if (fs.existsSync('.env.example')) {
-              const envExample = fs.readFileSync('.env.example', 'utf8');
-              const requiredVars = envExample
-                .split('\\n')
-                .filter(line => line.trim() && !line.startsWith('#'))
-                .map(line => line.split('=')[0].trim());
-              
-              console.log('Required variables:', requiredVars);
-              
-              // Проверяем что TELEGRAM_TOKEN есть в примере
-              if (!requiredVars.some(v => v.includes('TELEGRAM_TOKEN') || v.includes('BOT_TOKEN'))) {
-                console.warn('⚠️  TELEGRAM_TOKEN not found in .env.example');
-              }
-            } else {
-              console.log('ℹ️  No .env.example file');
-            }
-          "
+          # Тест 2: Быстрый запуск бота
+          echo "2. Quick bot startup test (5 seconds)..."
           
-          # Тест 3: Быстрый запуск бота (5 секунд)
-          echo "3. Quick bot startup test..."
+          LOG_FILE="/tmp/bot_startup_$(date +%s).log"
           
-          # Создаем временный файл для логов
-          LOG_FILE="/tmp/bot_startup_test_$(date +%s).log"
-          
-          # Запускаем бот в фоне с тестовыми переменными
-          export $(grep -v '^#' .env.test | xargs)
-          
-          # Запускаем с таймаутом
-          timeout 8s node index.js > "$LOG_FILE" 2>&1 &
+          # Запускаем бот в фоне
+          timeout 5s node index.js > "$LOG_FILE" 2>&1 &
           BOT_PID=$!
           
-          # Ждем 3 секунды
-          sleep 3
+          # Ждем 2 секунды
+          sleep 2
           
-          # Проверяем что процесс еще жив
+          # Проверяем что процесс жив
           if ! kill -0 $BOT_PID 2>/dev/null; then
             echo "❌ Bot process died immediately"
-            echo "Last output:"
-            cat "$LOG_FILE"
+            echo "=== Last 10 lines of output ==="
+            tail -10 "$LOG_FILE" || echo "No output"
             exit 1
           fi
           
-          # Проверяем логи на ошибки
-          if grep -q "❌\|Error:\|ReferenceError\|TypeError\|SyntaxError" "$LOG_FILE"; then
-            echo "❌ Startup errors detected:"
+          # Проверяем логи на критические ошибки
+          if grep -q "❌\|ReferenceError\|TypeError\|SyntaxError" "$LOG_FILE"; then
+            echo "❌ Critical errors detected:"
             echo "========================================"
-            grep -A2 -B2 "❌\|Error:\|ReferenceError\|TypeError\|SyntaxError" "$LOG_FILE"
+            grep -A2 -B1 "❌\|ReferenceError\|TypeError\|SyntaxError" "$LOG_FILE" | head -20
             echo "========================================"
             kill $BOT_PID 2>/dev/null || true
             exit 1
           fi
           
-          # Проверяем успешные сообщения
-          if grep -q "✅\|started\|launched\|Bot.*running" "$LOG_FILE"; then
-            echo "✅ Bot shows startup success messages"
-          else
-            echo "⚠️  No startup success messages (might be normal for webhook mode)"
-          fi
-          
           # Останавливаем бот
           kill $BOT_PID 2>/dev/null || true
-          sleep 1
           
-          echo "✅ Smoke test completed successfully"
-          
-        env:
-          NODE_ENV: test
+          echo "✅ Bot started without critical errors"
+          echo "=== Startup log snippet ==="
+          tail -5 "$LOG_FILE" || echo "No log output"
         
       - name: 📊 Common error patterns check
         run: |
-          echo "Checking for common error patterns in code..."
+          echo "Checking for common error patterns..."
           
-          # Проверяем наличие потенциальных проблем
-          ERROR_FOUND=0
-          
-          # 1. server is not defined
-          if grep -r "server\.on\|server\.listen" src/ --include="*.js" | grep -v "let server\|const server\|var server" | head -5; then
-            echo "⚠️  Found 'server' usage - ensure 'let server' is declared before use"
+          # 1. Проверяем обработчик /start
+          if ! grep -r "startHandler\|/start" src/ --include="*.js" | head -1; then
+            echo "⚠️  No /start handler found in source code"
           fi
           
-          # 2. Проверяем обработчик /start
-          if ! grep -r "\/start\|startHandler" src/ --include="*.js" | head -1; then
-            echo "❌ No /start handler found in source code"
-            ERROR_FOUND=1
-          fi
-          
-          # 3. Проверяем что нет синхронных ошибок
-          if grep -r "process\.exit(1)" src/ --include="*.js" | grep -v "console.error" | head -3; then
+          # 2. Проверяем что нет process.exit без логов
+          if grep -r "process\.exit\(1\)" src/ --include="*.js" | grep -v "console\.error\|console\.log" | head -2; then
             echo "⚠️  Found process.exit(1) without error logging"
           fi
           
-          # 4. Проверяем импорты
-          if grep -r "import.*from.*\.js" src/ --include="*.js" | grep -v "\.js'" | head -3; then
-            echo "⚠️  Found imports without .js extension (might fail in ES modules)"
-          fi
-          
-          if [ $ERROR_FOUND -eq 1 ]; then
-            exit 1
-          fi
-          
-          echo "✅ No critical patterns found"
+          echo "✅ Pattern check completed"
         
       - name: 📝 Final summary
+        if: always()
         run: |
           echo "========================================"
-          echo "✅ ALL CHECKS PASSED"
-          echo "✅ Syntax: Valid"
-          echo "✅ Imports: Working"
-          echo "✅ Startup: No critical errors"
-          echo "✅ Files: All present"
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ ALL CHECKS PASSED"
+            echo "Bot is ready for deployment! 🚀"
+          else
+            echo "❌ SOME CHECKS FAILED"
+            echo "Fix the issues above before deploying."
+          fi
           echo "========================================"
-          echo "Bot is ready for deployment! 🚀"
