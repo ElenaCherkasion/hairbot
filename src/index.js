@@ -54,6 +54,8 @@ export async function startBot() {
     process.exit(1);
   }
 
+  const isTestEnv = process.env.NODE_ENV === "test" || token === "test_token_123";
+
   const app = express();
   app.use(express.json({ limit: "2mb" }));
 
@@ -77,12 +79,20 @@ export async function startBot() {
     // webhook endpoint
     app.use(wh.path, bot.webhookCallback());
 
-    await bot.telegram.setWebhook(wh.url);
-    console.log("✅ Telegram webhook set:", wh.url);
+    if (!isTestEnv) {
+      await bot.telegram.setWebhook(wh.url);
+      console.log("✅ Telegram webhook set:", wh.url);
+    } else {
+      console.log("⚠️ NODE_ENV=test — skipping Telegram webhook setup");
+    }
   } else {
     console.log("ℹ️ WEBHOOK_BASE_URL not set — using POLLING mode");
-    await bot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
-    await bot.launch();
+    if (!isTestEnv) {
+      await bot.telegram.deleteWebhook({ drop_pending_updates: false }).catch(() => {});
+      await bot.launch();
+    } else {
+      console.log("⚠️ NODE_ENV=test — skipping bot.launch()");
+    }
   }
 
   // HTTP server (one time)
