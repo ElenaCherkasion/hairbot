@@ -61,6 +61,7 @@ export async function startBot() {
   callbackHandler(bot, pool);
 
   const appServer = express();
+  appServer.use(express.json({ limit: "2mb" }));
   const runKeepAlive =
     typeof startKeepAlive === "function" ? startKeepAlive : () => {};
 
