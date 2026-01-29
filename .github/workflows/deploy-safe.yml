@@ -1,4 +1,4 @@
-name: 🚀 Safe Deploy
+﻿name: 🚀 Safe Deploy
 on:
   push:
     branches: [main]

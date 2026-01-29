@@ -1,0 +1,18 @@
+﻿name: 🔍 Code Quality Checks
+on: [push, pull_request]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: "18"
+      - run: npm ci
+      - run: node --check index.js || exit 1
+      - name: Check critical files
+        run: |
+          [ -f "package.json" ] || { echo "❌ Нет package.json"; exit 1; }
+          [ -f "index.js" ] || { echo "❌ Нет index.js"; exit 1; }
+          echo "✅ Все необходимые файлы на месте"
