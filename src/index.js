@@ -55,6 +55,10 @@ export async function startBot() {
   const pool = createPoolIfConfigured();
 
   const bot = new Telegraf(token);
+  const restartState = { id: 0, reason: "" };
+
+  startHandler(bot, restartState);
+  callbackHandler(bot, pool);
 
   const appServer = express();
   const runKeepAlive =
