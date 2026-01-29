@@ -1,9 +1,11 @@
 ﻿import { startBot } from "./src/index.js";
 
-startBot().then(bot => {
-  if (bot) {
-    console.log("✅ Bot started");
-  }
-}).catch(e => {
-  console.log("Bot error (expected with test token):", e.message);
-});
+const entrypoint = process.argv[1] || "";
+const isDirectRun = entrypoint.endsWith("index.js");
+
+if (isDirectRun) {
+  startBot().catch((e) => {
+    console.error("❌ Root index.js: bot start failed:", e);
+    process.exit(1);
+  });
+}
