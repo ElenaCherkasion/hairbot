@@ -2,12 +2,8 @@
 import { startBot } from "./src/index.js";
 
 startBot().catch((e) => {
-  console.error("вќЊ Root index.js: bot start failed:", e);
-  process.exit(1);
-});
-startBot().catch((e) => {
   console.error("⚠️ Root index.js: bot start failed:", e);
   process.exit(1);
 });
 
-// ✅ Безопасный деплой работает! $(Get-Date)
+// ✅ Безопасный деплой работает!
